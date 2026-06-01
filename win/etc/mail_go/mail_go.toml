@@ -1,0 +1,30 @@
+[database]
+  driver = "sqlite"
+  dsn = "./win/srv/mail_go/mail.db"
+
+[storage]
+  base_dir = "./win/srv/mail_go/"
+  attach_dir = "win\\srv\\mail_go\\attachments"
+
+[web]
+  addr = ":8080"
+
+[smtp]
+  addr = ":25"
+  tls_addr = ":465"
+  domain = "localhost"
+  tls_cert = ""
+  tls_key = ""
+  max_message_bytes = 67108864
+
+[imap]
+  addr = ":143"
+  tls_addr = ":993"
+  tls_cert = ""
+  tls_key = ""
+
+[pop3]
+  addr = ":110"
+  tls_addr = ":995"
+  tls_cert = ""
+  tls_key = ""

@@ -1,0 +1,44 @@
+{{define "admin_dashboard"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理后台 - MailGo</title>
+    {{template "styles" .}}
+</head>
+<body>
+    {{template "navbar" .}}
+    <div class="container">
+        <div class="clearfix">
+            <div class="sidebar">
+                <a href="/inbox">返回邮箱</a>
+                <a href="/admin" class="active">控制面板</a>
+                <a href="/admin/domains">域名管理</a>
+                <a href="/admin/users">用户管理</a>
+            </div>
+            <div class="content">
+                <h2 style="margin-bottom:24px;">管理后台</h2>
+                <div style="margin-bottom:24px;">
+                    <div class="stat-card">
+                        <h3>{{.domainCount}}</h3>
+                        <p>域名数</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>{{.userCount}}</h3>
+                        <p>用户数</p>
+                    </div>
+                </div>
+                <div class="card">
+                    <h3>快捷操作</h3>
+                    <p style="margin-top:12px;">
+                        <a href="/admin/domains/new" class="btn btn-primary">新增域名</a>
+                        <a href="/admin/users/new" class="btn btn-primary" style="margin-left:8px;">新增用户</a>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+{{end}}

@@ -1,0 +1,81 @@
+{{define "admin_users"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>用户管理 - MailGo</title>
+    {{template "styles" .}}
+</head>
+<body>
+    {{template "navbar" .}}
+    <div class="container">
+        <div class="clearfix">
+            <div class="sidebar">
+                <a href="/inbox">返回邮箱</a>
+                <a href="/admin">控制面板</a>
+                <a href="/admin/domains">域名管理</a>
+                <a href="/admin/users" class="active">用户管理</a>
+            </div>
+            <div class="content">
+                <div class="card">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                        <h2>用户列表</h2>
+                        <a href="/admin/users/new" class="btn btn-primary">新增用户</a>
+                    </div>
+                    {{if not .users}}
+                    <p style="color:#7f8c8d;text-align:center;padding:40px 0;">暂无用户</p>
+                    {{else}}
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>用户名</th>
+                                <th>域名ID</th>
+                                <th>配额</th>
+                                <th>已用</th>
+                                <th>状态</th>
+                                <th>管理员</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        {{range .users}}
+                            <tr>
+                                <td>{{.ID}}</td>
+                                <td>{{.Username}}</td>
+                                <td>{{.DomainID}}</td>
+                                <td>{{formatBytes .QuotaBytes}}</td>
+                                <td>{{formatBytes .UsedBytes}}</td>
+                                <td>{{if .IsActive}}✅{{else}}❌{{end}}</td>
+                                <td>{{if .IsAdmin}}✅{{else}}—{{end}}</td>
+                                <td>
+                                    <a href="/admin/users/{{.ID}}/edit" class="btn btn-primary btn-sm">编辑</a>
+                                    <form method="POST" action="/admin/users/{{.ID}}/delete" style="display:inline;"
+                                          onsubmit="return confirm('确定要删除用户 {{.Username}} 吗？');">
+                                        <button type="submit" class="btn btn-danger btn-sm">删除</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        {{end}}
+                        </tbody>
+                    </table>
+                    {{end}}
+                </div>
+                {{if .totalPages}}
+                <div class="pagination">
+                    {{if gt .page 1}}
+                    <a href="/admin/users?page={{sub .page 1}}">上一页</a>
+                    {{end}}
+                    <span>第 {{.page}} / {{.totalPages}} 页</span>
+                    {{if lt .page .totalPages}}
+                    <a href="/admin/users?page={{add .page 1}}">下一页</a>
+                    {{end}}
+                </div>
+                {{end}}
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+{{end}}

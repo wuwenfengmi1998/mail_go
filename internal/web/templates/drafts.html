@@ -1,0 +1,74 @@
+{{define "drafts"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>草稿箱 - MailGo</title>
+    {{template "styles" .}}
+</head>
+<body>
+    {{template "navbar" .}}
+    <div class="container">
+        <div class="clearfix">
+            <div class="sidebar">
+                <a href="/inbox" class="{{if eq .activeFolder `inbox`}}active{{end}}">收件箱</a>
+                <a href="/drafts" class="{{if eq .activeFolder `drafts`}}active{{end}}">草稿箱</a>
+                <a href="/sent" class="{{if eq .activeFolder `sent`}}active{{end}}">发件箱</a>
+                <a href="/compose" class="{{if eq .activeFolder `compose`}}active{{end}}">撰写邮件</a>
+                <a href="/settings" class="{{if eq .activeFolder `settings`}}active{{end}}">设置</a>
+            </div>
+            <div class="content">
+                <div class="card">
+                    <h2 style="margin-bottom:16px;">草稿箱</h2>
+                    {{if not .messages}}
+                    <p style="color:#7f8c8d;text-align:center;padding:40px 0;">暂无草稿邮件</p>
+                    {{else}}
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width:25%;">发件人/收件人</th>
+                                <th style="width:45%;">主题</th>
+                                <th style="width:20%;">时间</th>
+                                <th style="width:10%;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        {{range .messages}}
+                            <tr>
+                                <td>{{.ToAddr}}</td>
+                                <td>
+                                    <a href="/drafts/{{.ID}}" class="message-subject">
+                                        {{if .Subject}}{{.Subject}}{{else}}(无主题){{end}}
+                                    </a>
+                                </td>
+                                <td>{{.Date.Format "2006-01-02 15:04"}}</td>
+                                <td>
+                                    <form method="POST" action="/mail/delete/{{.ID}}" style="display:inline;"
+                                          onsubmit="return confirm('确定要删除这封邮件吗？');">
+                                        <button type="submit" class="btn btn-danger btn-sm">删除</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        {{end}}
+                        </tbody>
+                    </table>
+                    {{end}}
+                </div>
+                {{if .totalPages}}
+                <div class="pagination">
+                    {{if gt .page 1}}
+                    <a href="/drafts?page={{sub .page 1}}">上一页</a>
+                    {{end}}
+                    <span>第 {{.page}} / {{.totalPages}} 页</span>
+                    {{if lt .page .totalPages}}
+                    <a href="/drafts?page={{add .page 1}}">下一页</a>
+                    {{end}}
+                </div>
+                {{end}}
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+{{end}}

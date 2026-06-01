@@ -1,0 +1,56 @@
+{{define "admin_domain_form"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{if .isEdit}}编辑域名{{else}}新增域名{{end}} - MailGo</title>
+    {{template "styles" .}}
+</head>
+<body>
+    {{template "navbar" .}}
+    <div class="container">
+        <div class="clearfix">
+            <div class="sidebar">
+                <a href="/inbox">返回邮箱</a>
+                <a href="/admin">控制面板</a>
+                <a href="/admin/domains" class="active">域名管理</a>
+                <a href="/admin/users">用户管理</a>
+            </div>
+            <div class="content">
+                <div class="card">
+                    <h2 style="margin-bottom:16px;">{{if .isEdit}}编辑域名{{else}}新增域名{{end}}</h2>
+                    {{if .error}}<div class="alert alert-error">{{.error}}</div>{{end}}
+                    <form method="POST" action="{{if .isEdit}}/admin/domains/{{.domain.ID}}{{else}}/admin/domains{{end}}">
+                        <div class="form-group">
+                            <label>域名</label>
+                            <input type="text" name="name" required value="{{.domain.Name}}" placeholder="example.com">
+                        </div>
+                        <div class="form-group">
+                            <label>SMTP 端口</label>
+                            <input type="number" name="smtp_port" value="{{.domain.SmtpPort}}" placeholder="25">
+                        </div>
+                        <div class="form-group">
+                            <label>IMAP 端口</label>
+                            <input type="number" name="imap_port" value="{{.domain.ImapPort}}" placeholder="143">
+                        </div>
+                        <div class="form-group">
+                            <label>POP3 端口</label>
+                            <input type="number" name="pop3_port" value="{{.domain.Pop3Port}}" placeholder="110">
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" name="tls_enabled" {{if .domain.TlsEnabled}}checked{{end}}>
+                                启用 TLS
+                            </label>
+                        </div>
+                        <button type="submit" class="btn btn-primary">{{if .isEdit}}保存更改{{else}}创建域名{{end}}</button>
+                        <a href="/admin/domains" class="btn" style="margin-left:8px;background:#bdc3c7;color:#fff;">取消</a>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+{{end}}

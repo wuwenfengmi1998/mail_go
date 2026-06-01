@@ -1,0 +1,33 @@
+{{define "login"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - MailGo</title>
+    {{template "styles" .}}
+</head>
+<body>
+    {{template "navbar" .}}
+    <div class="container">
+        <div style="max-width:400px;margin:80px auto;">
+            <div class="card">
+                <h2 style="text-align:center;margin-bottom:24px;">MailGo 登录</h2>
+                {{if .error}}<div class="alert alert-error">{{.error}}</div>{{end}}
+                <form method="POST" action="/login">
+                    <div class="form-group">
+                        <label>邮箱地址</label>
+                        <input type="email" name="email" required autofocus placeholder="admin@example.com">
+                    </div>
+                    <div class="form-group">
+                        <label>密码</label>
+                        <input type="password" name="password" required placeholder="请输入密码">
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="width:100%;">登录</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+{{end}}

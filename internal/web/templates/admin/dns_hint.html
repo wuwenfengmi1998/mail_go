@@ -1,0 +1,46 @@
+{{define "admin_dns_hint"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DNS配置 - MailGo</title>
+    {{template "styles" .}}
+</head>
+<body>
+    {{template "navbar" .}}
+    <div class="container">
+        <div class="clearfix">
+            <div class="sidebar">
+                <a href="/inbox">返回邮箱</a>
+                <a href="/admin">控制面板</a>
+                <a href="/admin/domains" class="active">域名管理</a>
+                <a href="/admin/users">用户管理</a>
+            </div>
+            <div class="content">
+                <div class="card">
+                    <h2 style="margin-bottom:16px;">DNS 配置提示 — {{.domain.Name}}</h2>
+                    <p style="margin-bottom:16px;color:#7f8c8d;">请在您的 DNS 服务商处添加以下记录：</p>
+
+                    <h4 style="margin-bottom:8px;">MX 记录</h4>
+                    <div class="dns-record">@ IN MX 10 mail.{{.domain.Name}}.</div>
+
+                    <h4 style="margin-bottom:8px;">SPF 记录 (TXT)</h4>
+                    <div class="dns-record">@ IN TXT "v=spf1 mx -all"</div>
+
+                    <h4 style="margin-bottom:8px;">DKIM 记录</h4>
+                    <div class="dns-record" style="color:#e67e22;">⚠️ 请在域名配置页配置 DKIM 私钥路径后，将自动生成 DKIM 公钥记录。</div>
+
+                    <h4 style="margin-bottom:8px;">DMARC 记录</h4>
+                    <div class="dns-record">_dmarc.{{.domain.Name}}. IN TXT "v=DMARC1; p=none; rua=mailto:postmaster@{{.domain.Name}}"</div>
+
+                    <div style="margin-top:24px;">
+                        <a href="/admin/domains" class="btn" style="background:#bdc3c7;color:#fff;">返回域名列表</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+{{end}}

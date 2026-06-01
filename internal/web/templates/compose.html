@@ -1,0 +1,55 @@
+{{define "compose"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>撰写邮件 - MailGo</title>
+    {{template "styles" .}}
+</head>
+<body>
+    {{template "navbar" .}}
+    <div class="container">
+        <div class="clearfix">
+            <div class="sidebar">
+                <a href="/inbox" class="{{if eq .activeFolder `inbox`}}active{{end}}">收件箱</a>
+                <a href="/drafts" class="{{if eq .activeFolder `drafts`}}active{{end}}">草稿箱</a>
+                <a href="/sent" class="{{if eq .activeFolder `sent`}}active{{end}}">发件箱</a>
+                <a href="/compose" class="{{if eq .activeFolder `compose`}}active{{end}}">撰写邮件</a>
+                <a href="/settings" class="{{if eq .activeFolder `settings`}}active{{end}}">设置</a>
+            </div>
+            <div class="content">
+                <div class="card">
+                    <h2 style="margin-bottom:16px;">撰写邮件</h2>
+                    {{if .error}}<div class="alert alert-error">{{.error}}</div>{{end}}
+                    <form method="POST" action="/compose" enctype="multipart/form-data">
+                        <div class="form-group">
+                            <label>收件人</label>
+                            <input type="email" name="to" required value="{{.to}}" placeholder="user@example.com">
+                        </div>
+                        <div class="form-group">
+                            <label>抄送（可选）</label>
+                            <input type="text" name="cc" value="{{.cc}}" placeholder="cc@example.com">
+                        </div>
+                        <div class="form-group">
+                            <label>主题</label>
+                            <input type="text" name="subject" value="{{.subject}}" placeholder="邮件主题">
+                        </div>
+                        <div class="form-group">
+                            <label>正文</label>
+                            <textarea name="body" rows="12" placeholder="请输入邮件内容..."></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>附件</label>
+                            <input type="file" name="attachments" multiple>
+                        </div>
+                        <button type="submit" class="btn btn-primary">发送邮件</button>
+                        <a href="/inbox" class="btn" style="margin-left:8px;">取消</a>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+{{end}}
