@@ -1,0 +1,42 @@
+# 编译产物
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# 测试产物
+*.test
+*.out
+*.prof
+
+# Go 工具缓存
+vendor/
+
+# 日志文件
+*.log
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS 生成文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 项目运行时数据（Windows 测试路径）
+win/etc/
+win/srv/
+
+# 数据库文件
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# 临时测试文件
+login_test.html
