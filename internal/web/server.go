@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"html/template"
 	"math"
+	"net"
+	"os"
+	"strings"
 
 	"mail_go/config"
 	"mail_go/internal/storage"
@@ -179,6 +182,25 @@ func (ws *WebServer) registerRoutes() {
 }
 
 // Start launches the HTTP server on the configured address.
+// Supports both TCP (e.g. ":8080") and Unix socket (e.g. "/run/mail_go/web.sock").
 func (ws *WebServer) Start() error {
-	return ws.engine.Run(ws.cfg.Addr)
+	addr := ws.cfg.Addr
+
+	// Unix socket: 地址以 / 开头
+	if strings.HasPrefix(addr, "/") {
+		// 清理旧的 socket 文件
+		os.Remove(addr)
+
+		listener, err := net.Listen("unix", addr)
+		if err != nil {
+			return fmt.Errorf("监听 Unix socket 失败 %s: %w", addr, err)
+		}
+		// 允许 nginx 等外部进程连接
+		os.Chmod(addr, 0666)
+
+		return ws.engine.RunListener(listener)
+	}
+
+	// TCP 端口
+	return ws.engine.Run(addr)
 }
