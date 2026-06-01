@@ -17,6 +17,28 @@
 - Windows路径回退: ./win/etc/mail_go 和 ./win/srv/mail_go
 - 默认管理员: admin@example.com / admin
 
+## 增强功能（v2）
+- DKIM: 创建域名时自动生成RSA 2048密钥对，DNS提示页显示DKIM TXT记录，internal/dkim/keys.go
+- 域名编辑: /admin/domains/:id/edit，可改端口/TLS/重新生成DKIM
+- 附件配额: 上传时检查用户QuotaBytes，同步更新UsedBytes，SMTP收信也更新
+- 富文本: compose页集成Quill.js(CDN)，保存纯文本+HTML到数据库，发送multipart/alternative
+- OAuth2/LDAP: 默认关闭，配置文件控制；internal/auth/ 包（provider.go/ldap.go/oauth2.go）
+  - 依赖: github.com/go-ldap/ldap/v3, golang.org/x/oauth2
+- Domain模型新增: DkimSelector, DkimPrivateKey, DkimPublicKey
+- Config新增: Auth AuthConfig（OAuth2+LDAP各项配置）
+
+## 增强功能（v3）
+- Banlist系统: 登录失败N次ban IP，次数/时长后台可配(BanConfig)，admin /admin/bans 查看/解ban
+  - BanEntry模型、BanStore、BanMiddleware、banned.html、admin/bans.html
+  - AuthHandler新增banCfg字段，DoLogin/LDAPLogin集成ban检查
+  - 配置: max_fail_attempts(默认5), ban_duration_min(默认30分钟)
+- 管理仪表盘增强: 邮件分布表(INBOX/Sent/Drafts/Trash计数+大小)、今日/7日收发统计、ban计数
+  - MailStore新增: CountByFolder, CountAll, TotalSizeByFolder, TotalSize, CountByFolderSince
+- 全量邮件查看: /admin/mails 支持文件夹筛选(INBOX/Sent/Drafts/Trash)，分页
+  - MailStore新增: ListAll, ListAllByFolder
+  - admin/mails.html
+- Admin sidebar统一: 控制面板/域名管理/用户管理/所有邮件/IP黑名单
+
 ## 已知坑
 - go-imap v2 是beta，API不稳定，必须用v1
 - Go filepath.Glob 不支持 ** 递归匹配，模板分两轮加载

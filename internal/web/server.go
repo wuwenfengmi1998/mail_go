@@ -36,6 +36,8 @@ type WebServer struct {
 	stores  *store.Stores
 	storage *storage.AttachmentStorage
 	cfg     config.WebConfig
+	authCfg config.AuthConfig
+	banCfg  config.BanConfig
 }
 
 // templateFuncs returns custom template functions for rendering.
@@ -60,6 +62,9 @@ func templateFuncs() template.FuncMap {
 		"safeHTML": func(s string) template.HTML {
 			return template.HTML(s)
 		},
+		"safeJS": func(s string) template.JS {
+			return template.JS(s)
+		},
 		"formatBytes": func(b int64) string {
 			return formatBytes(b)
 		},
@@ -68,7 +73,7 @@ func templateFuncs() template.FuncMap {
 
 // NewWebServer creates a new WebServer, initializes the Gin engine,
 // configures sessions, middleware, and registers all routes.
-func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storage.AttachmentStorage) *WebServer {
+func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, authCfg config.AuthConfig, banCfg config.BanConfig) *WebServer {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	engine.Use(gin.Logger())
@@ -95,6 +100,8 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 		stores:  stores,
 		storage: attStorage,
 		cfg:     cfg,
+		authCfg: authCfg,
+		banCfg:  banCfg,
 	}
 
 	ws.registerRoutes()
@@ -103,13 +110,19 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 
 // registerRoutes sets up all HTTP routes with their handlers and middleware.
 func (ws *WebServer) registerRoutes() {
-	authHandler := handlers.NewAuthHandler(ws.stores)
+	authHandler := handlers.NewAuthHandler(ws.stores, ws.authCfg, ws.banCfg)
 	mailHandler := handlers.NewMailHandler(ws.stores, ws.storage)
 	adminHandler := handlers.NewAdminHandler(ws.stores)
+
+	// Apply BanMiddleware globally before public routes
+	ws.engine.Use(middleware.BanMiddleware(ws.stores))
 
 	// Public routes (no auth required)
 	ws.engine.GET("/login", authHandler.ShowLogin)
 	ws.engine.POST("/login", authHandler.DoLogin)
+	ws.engine.POST("/login/ldap", authHandler.LDAPLogin)
+	ws.engine.GET("/auth/oauth2", authHandler.OAuth2Start)
+	ws.engine.GET("/auth/oauth2/callback", authHandler.OAuth2Callback)
 
 	// Auth-protected routes
 	auth := ws.engine.Group("")
@@ -146,6 +159,8 @@ func (ws *WebServer) registerRoutes() {
 		admin.GET("/domains", adminHandler.ListDomains)
 		admin.GET("/domains/new", adminHandler.NewDomain)
 		admin.POST("/domains", adminHandler.CreateDomain)
+		admin.GET("/domains/:id/edit", adminHandler.EditDomain)
+		admin.POST("/domains/:id", adminHandler.UpdateDomain)
 		admin.POST("/domains/:id/delete", adminHandler.DeleteDomain)
 		admin.GET("/domains/:id/dns", adminHandler.DNSHint)
 		admin.GET("/users", adminHandler.ListUsers)
@@ -154,6 +169,10 @@ func (ws *WebServer) registerRoutes() {
 		admin.POST("/users/:id/delete", adminHandler.DeleteUser)
 		admin.GET("/users/:id/edit", adminHandler.EditUser)
 		admin.POST("/users/:id", adminHandler.UpdateUser)
+		admin.GET("/mails", adminHandler.ListMails)
+		admin.GET("/bans", adminHandler.ListBans)
+		admin.POST("/bans/:id/unban", adminHandler.UnbanIP)
+		admin.POST("/bans/cleanup", adminHandler.CleanupBans)
 	}
 }
 

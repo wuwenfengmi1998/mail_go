@@ -52,6 +52,31 @@ type POP3Config struct {
 	TLSKey  string `toml:"tls_key"`
 }
 
+// AuthConfig holds external authentication settings (OAuth2, LDAP).
+type AuthConfig struct {
+	// OAuth2 configuration
+	OAuth2Enabled      bool   `toml:"oauth2_enabled"`
+	OAuth2Provider     string `toml:"oauth2_provider"`      // google, github, gitlab
+	OAuth2ClientID     string `toml:"oauth2_client_id"`
+	OAuth2ClientSecret string `toml:"oauth2_client_secret"`
+	OAuth2RedirectURL  string `toml:"oauth2_redirect_url"`
+
+	// LDAP configuration
+	LDAPEnabled     bool   `toml:"ldap_enabled"`
+	LDAPServer      string `toml:"ldap_server"`        // e.g. ldap://localhost:389
+	LDAPBindDN      string `toml:"ldap_bind_dn"`       // e.g. cn=admin,dc=example,dc=com
+	LDAPBindPassword string `toml:"ldap_bind_password"`
+	LDAPSearchBase   string `toml:"ldap_search_base"`   // e.g. ou=users,dc=example,dc=com
+	LDAPSearchFilter string `toml:"ldap_search_filter"` // e.g. (uid=%s)
+	LDAPUseTLS       bool   `toml:"ldap_use_tls"`
+}
+
+// BanConfig holds IP ban settings for failed login attempts.
+type BanConfig struct {
+	MaxFailAttempts int `toml:"max_fail_attempts"` // Default: 5
+	BanDurationMin  int `toml:"ban_duration_min"`  // Default: 30 (minutes)
+}
+
 // Config is the top-level configuration structure.
 type Config struct {
 	Database DatabaseConfig `toml:"database"`
@@ -60,6 +85,8 @@ type Config struct {
 	SMTP     SMTPConfig     `toml:"smtp"`
 	IMAP     IMAPConfig     `toml:"imap"`
 	POP3     POP3Config     `toml:"pop3"`
+	Auth     AuthConfig     `toml:"auth"`
+	Ban      BanConfig      `toml:"ban"`
 }
 
 // isWindows returns true if the current OS is Windows.
@@ -120,6 +147,14 @@ func defaultConfig() *Config {
 			Addr:    fmt.Sprintf(":%d", DefaultPOP3Port),
 			TLSAddr: fmt.Sprintf(":%d", DefaultPOP3TLSPort),
 		},
+		Auth: AuthConfig{
+			OAuth2Enabled: false,
+			LDAPEnabled:   false,
+		},
+		Ban: BanConfig{
+			MaxFailAttempts: 5,
+			BanDurationMin:  30,
+		},
 	}
 }
 
@@ -168,6 +203,14 @@ func mergeDefaults(cfg *Config, defaults *Config) *Config {
 	}
 	if cfg.POP3.TLSAddr == "" {
 		cfg.POP3.TLSAddr = defaults.POP3.TLSAddr
+	}
+	// Auth defaults: no merging needed since booleans default to false
+	// and string fields are intentionally empty when disabled
+	if cfg.Ban.MaxFailAttempts == 0 {
+		cfg.Ban.MaxFailAttempts = defaults.Ban.MaxFailAttempts
+	}
+	if cfg.Ban.BanDurationMin == 0 {
+		cfg.Ban.BanDurationMin = defaults.Ban.BanDurationMin
 	}
 	return cfg
 }

@@ -13,9 +13,11 @@
         <div class="clearfix">
             <div class="sidebar">
                 <a href="/inbox">返回邮箱</a>
-                <a href="/admin" class="active">控制面板</a>
-                <a href="/admin/domains">域名管理</a>
-                <a href="/admin/users">用户管理</a>
+                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>控制面板</a>
+                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>域名管理</a>
+                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>用户管理</a>
+                <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>所有邮件</a>
+                <a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>IP黑名单</a>
             </div>
             <div class="content">
                 <h2 style="margin-bottom:24px;">管理后台</h2>
@@ -28,12 +30,53 @@
                         <h3>{{.userCount}}</h3>
                         <p>用户数</p>
                     </div>
+                    <div class="stat-card">
+                        <h3>{{.totalMails}}</h3>
+                        <p>邮件总数</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>{{.banCount}}</h3>
+                        <p>被封IP</p>
+                    </div>
+                </div>
+                <div class="card">
+                    <h3>邮件分布</h3>
+                    <table style="margin-top:12px;">
+                        <thead>
+                            <tr>
+                                <th>文件夹</th>
+                                <th>邮件数</th>
+                                <th>占用空间</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td>收件箱 (INBOX)</td><td>{{.inboxCount}}</td><td>{{formatBytes .inboxSize}}</td></tr>
+                            <tr><td>发件箱 (Sent)</td><td>{{.sentCount}}</td><td>{{formatBytes .sentSize}}</td></tr>
+                            <tr><td>草稿箱 (Drafts)</td><td>{{.draftsCount}}</td><td>—</td></tr>
+                            <tr><td>垃圾箱 (Trash)</td><td>{{.trashCount}}</td><td>—</td></tr>
+                            <tr style="font-weight:bold;"><td>合计</td><td>{{.totalMails}}</td><td>{{formatBytes .totalSize}}</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="card">
+                    <h3>收发统计</h3>
+                    <table style="margin-top:12px;">
+                        <thead>
+                            <tr><th>时间段</th><th>收件</th><th>发件</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr><td>今日</td><td>{{.todayReceived}}</td><td>{{.todaySent}}</td></tr>
+                            <tr><td>近 7 天</td><td>{{.weekReceived}}</td><td>{{.weekSent}}</td></tr>
+                        </tbody>
+                    </table>
                 </div>
                 <div class="card">
                     <h3>快捷操作</h3>
                     <p style="margin-top:12px;">
                         <a href="/admin/domains/new" class="btn btn-primary">新增域名</a>
                         <a href="/admin/users/new" class="btn btn-primary" style="margin-left:8px;">新增用户</a>
+                        <a href="/admin/mails" class="btn btn-primary" style="margin-left:8px;">查看所有邮件</a>
+                        <a href="/admin/bans" class="btn btn-primary" style="margin-left:8px;">IP黑名单</a>
                     </p>
                 </div>
             </div>

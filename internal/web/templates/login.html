@@ -25,6 +25,30 @@
                     </div>
                     <button type="submit" class="btn btn-primary" style="width:100%;">登录</button>
                 </form>
+
+                {{if or .oauth2Enabled .ldapEnabled}}
+                <div style="text-align:center;margin:16px 0;color:#7f8c8d;">─── 或 ───</div>
+                {{end}}
+
+                {{if .ldapEnabled}}
+                <form method="POST" action="/login/ldap">
+                    <div class="form-group">
+                        <label>LDAP 用户名</label>
+                        <input type="text" name="username" placeholder="LDAP 用户名">
+                    </div>
+                    <div class="form-group">
+                        <label>LDAP 密码</label>
+                        <input type="password" name="password" placeholder="LDAP 密码">
+                    </div>
+                    <button type="submit" class="btn" style="width:100%;background:#8e44ad;color:#fff;">LDAP 登录</button>
+                </form>
+                {{end}}
+
+                {{if .oauth2Enabled}}
+                <a href="/auth/oauth2" class="btn" style="width:100%;background:#3498db;color:#fff;text-align:center;display:block;margin-top:8px;">
+                    {{if eq .oauth2Provider "google"}}Google{{else if eq .oauth2Provider "github"}}GitHub{{else}}OAuth2{{end}} 登录
+                </a>
+                {{end}}
             </div>
         </div>
     </div>

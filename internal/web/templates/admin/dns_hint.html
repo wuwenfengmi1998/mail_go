@@ -13,9 +13,11 @@
         <div class="clearfix">
             <div class="sidebar">
                 <a href="/inbox">返回邮箱</a>
-                <a href="/admin">控制面板</a>
-                <a href="/admin/domains" class="active">域名管理</a>
-                <a href="/admin/users">用户管理</a>
+                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>控制面板</a>
+                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>域名管理</a>
+                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>用户管理</a>
+                <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>所有邮件</a>
+                <a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>IP黑名单</a>
             </div>
             <div class="content">
                 <div class="card">
@@ -28,8 +30,12 @@
                     <h4 style="margin-bottom:8px;">SPF 记录 (TXT)</h4>
                     <div class="dns-record">@ IN TXT "v=spf1 mx -all"</div>
 
-                    <h4 style="margin-bottom:8px;">DKIM 记录</h4>
-                    <div class="dns-record" style="color:#e67e22;">⚠️ 请在域名配置页配置 DKIM 私钥路径后，将自动生成 DKIM 公钥记录。</div>
+                    <h4 style="margin-bottom:8px;">DKIM 记录 (TXT)</h4>
+                    {{if .domain.DkimPublicKey}}
+                    <div class="dns-record">default._domainkey.{{.domain.Name}}. IN TXT "{{.dkimRecord}}"</div>
+                    {{else}}
+                    <div class="dns-record" style="color:#e67e22;">⚠️ DKIM 密钥尚未生成，请编辑域名重新生成。</div>
+                    {{end}}
 
                     <h4 style="margin-bottom:8px;">DMARC 记录</h4>
                     <div class="dns-record">_dmarc.{{.domain.Name}}. IN TXT "v=DMARC1; p=none; rua=mailto:postmaster@{{.domain.Name}}"</div>

@@ -12,6 +12,7 @@ type Stores struct {
 	Mails       MailStore
 	Domains     DomainStore
 	Attachments AttachmentStore
+	Bans        BanStore
 }
 
 // NewStores creates a new Stores instance with all GORM-backed implementations.
@@ -21,6 +22,7 @@ func NewStores(database *gorm.DB) *Stores {
 		Mails:       newMailStore(database),
 		Domains:     newDomainStore(database),
 		Attachments: newAttachmentStore(database),
+		Bans:        newBanStore(database),
 	}
 }
 
@@ -29,3 +31,4 @@ var _ = db.User{}
 var _ = db.Domain{}
 var _ = db.Message{}
 var _ = db.Attachment{}
+var _ = db.BanEntry{}

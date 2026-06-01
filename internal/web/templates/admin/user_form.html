@@ -13,9 +13,11 @@
         <div class="clearfix">
             <div class="sidebar">
                 <a href="/inbox">返回邮箱</a>
-                <a href="/admin">控制面板</a>
-                <a href="/admin/domains">域名管理</a>
-                <a href="/admin/users" class="active">用户管理</a>
+                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>控制面板</a>
+                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>域名管理</a>
+                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>用户管理</a>
+                <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>所有邮件</a>
+                <a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>IP黑名单</a>
             </div>
             <div class="content">
                 <div class="card">

@@ -89,7 +89,7 @@ func main() {
 	}
 
 	// 9. Start Web server
-	webServer := web.NewWebServer(cfg.Web, stores, attStorage)
+	webServer := web.NewWebServer(cfg.Web, stores, attStorage, cfg.Auth, cfg.Ban)
 	fmt.Printf("Web 服务启动在 %s\n", cfg.Web.Addr)
 	go func() {
 		if err := webServer.Start(); err != nil {

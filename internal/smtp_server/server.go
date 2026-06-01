@@ -279,6 +279,8 @@ func (s *smtpSession) Data(r io.Reader) error {
 			if attErr := s.backend.server.stores.Attachments.Create(&attCopy); attErr != nil {
 				log.Printf("SMTP: failed to create attachment record: %v", attErr)
 			}
+			// Update user used bytes for received attachments
+			_ = s.backend.server.stores.Users.UpdateUsedBytes(user.ID, attCopy.FileSize)
 		}
 
 		log.Printf("SMTP: message delivered to %s (ID=%d)", rcpt, msg.ID)

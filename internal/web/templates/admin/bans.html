@@ -1,10 +1,10 @@
-{{define "admin_domains"}}
+{{define "admin_bans"}}
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>域名管理 - MailGo</title>
+    <title>IP黑名单 - MailGo</title>
     {{template "styles" .}}
 </head>
 <body>
@@ -22,39 +22,37 @@
             <div class="content">
                 <div class="card">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-                        <h2>域名列表</h2>
-                        <a href="/admin/domains/new" class="btn btn-primary">新增域名</a>
+                        <h2>IP 黑名单</h2>
+                        <form method="POST" action="/admin/bans/cleanup" style="display:inline;">
+                            <button type="submit" class="btn btn-primary">清理过期记录</button>
+                        </form>
                     </div>
-                    {{if not .domains}}
-                    <p style="color:#7f8c8d;text-align:center;padding:40px 0;">暂无域名</p>
+                    {{if not .bans}}
+                    <p style="color:#7f8c8d;text-align:center;padding:40px 0;">暂无被封禁的 IP</p>
                     {{else}}
                     <table>
                         <thead>
                             <tr>
                                 <th>ID</th>
-                                <th>域名</th>
-                                <th>SMTP</th>
-                                <th>IMAP</th>
-                                <th>POP3</th>
-                                <th>TLS</th>
+                                <th>IP 地址</th>
+                                <th>失败次数</th>
+                                <th>原因</th>
+                                <th>到期时间</th>
                                 <th>操作</th>
                             </tr>
                         </thead>
                         <tbody>
-                        {{range .domains}}
+                        {{range .bans}}
                             <tr>
                                 <td>{{.ID}}</td>
-                                <td>{{.Name}}</td>
-                                <td>{{.SmtpPort}}</td>
-                                <td>{{.ImapPort}}</td>
-                                <td>{{.Pop3Port}}</td>
-                                <td>{{if .TlsEnabled}}✅{{else}}❌{{end}}</td>
+                                <td>{{.IPAddress}}</td>
+                                <td>{{.FailCount}}</td>
+                                <td>{{.Reason}}</td>
+                                <td>{{.ExpiresAt.Format "2006-01-02 15:04:05"}}</td>
                                 <td>
-                                    <a href="/admin/domains/{{.ID}}/edit" class="btn btn-primary btn-sm">编辑</a>
-                                    <a href="/admin/domains/{{.ID}}/dns" class="btn btn-primary btn-sm">DNS</a>
-                                    <form method="POST" action="/admin/domains/{{.ID}}/delete" style="display:inline;"
-                                          onsubmit="return confirm('确定要删除域名 {{.Name}} 吗？删除域名将导致关联用户无法收发邮件！');">
-                                        <button type="submit" class="btn btn-danger btn-sm">删除</button>
+                                    <form method="POST" action="/admin/bans/{{.ID}}/unban" style="display:inline;"
+                                          onsubmit="return confirm('确定要解封 IP {{.IPAddress}} 吗？');">
+                                        <button type="submit" class="btn btn-primary btn-sm">解封</button>
                                     </form>
                                 </td>
                             </tr>
@@ -66,11 +64,11 @@
                 {{if .totalPages}}
                 <div class="pagination">
                     {{if gt .page 1}}
-                    <a href="/admin/domains?page={{sub .page 1}}">上一页</a>
+                    <a href="/admin/bans?page={{sub .page 1}}">上一页</a>
                     {{end}}
                     <span>第 {{.page}} / {{.totalPages}} 页</span>
                     {{if lt .page .totalPages}}
-                    <a href="/admin/domains?page={{add .page 1}}">下一页</a>
+                    <a href="/admin/bans?page={{add .page 1}}">下一页</a>
                     {{end}}
                 </div>
                 {{end}}

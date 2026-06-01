@@ -28,3 +28,21 @@
   tls_addr = ":995"
   tls_cert = ""
   tls_key = ""
+
+[auth]
+  oauth2_enabled = false
+  oauth2_provider = ""
+  oauth2_client_id = ""
+  oauth2_client_secret = ""
+  oauth2_redirect_url = ""
+  ldap_enabled = false
+  ldap_server = ""
+  ldap_bind_dn = ""
+  ldap_bind_password = ""
+  ldap_search_base = ""
+  ldap_search_filter = ""
+  ldap_use_tls = false
+
+[ban]
+  max_fail_attempts = 5
+  ban_duration_min = 30

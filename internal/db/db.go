@@ -46,7 +46,7 @@ func InitDB(cfg config.DatabaseConfig, storageCfg config.StorageConfig) (*gorm.D
 	}
 
 	// Auto-migrate all models
-	if err := db.AutoMigrate(&User{}, &Domain{}, &Message{}, &Attachment{}); err != nil {
+	if err := db.AutoMigrate(&User{}, &Domain{}, &Message{}, &Attachment{}, &BanEntry{}); err != nil {
 		return nil, fmt.Errorf("数据库迁移失败: %w", err)
 	}
 

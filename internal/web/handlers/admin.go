@@ -2,10 +2,13 @@ package handlers
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"mail_go/internal/db"
+	"mail_go/internal/dkim"
 	"mail_go/internal/store"
 
 	"github.com/gin-gonic/gin"
@@ -27,13 +30,55 @@ func (h *AdminHandler) Dashboard(c *gin.Context) {
 	_, domainCount, _ := h.stores.Domains.List(1, 1)
 	_, userCount, _ := h.stores.Users.ListAll(1, 1)
 
+	// Mail statistics
+	totalMails, _ := h.stores.Mails.CountAll()
+	inboxCount, _ := h.stores.Mails.CountByFolder("INBOX")
+	sentCount, _ := h.stores.Mails.CountByFolder("Sent")
+	draftsCount, _ := h.stores.Mails.CountByFolder("Drafts")
+	trashCount, _ := h.stores.Mails.CountByFolder("Trash")
+
+	totalSize, _ := h.stores.Mails.TotalSize()
+	inboxSize, _ := h.stores.Mails.TotalSizeByFolder("INBOX")
+	sentSize, _ := h.stores.Mails.TotalSizeByFolder("Sent")
+
+	// Today and weekly statistics
+	todayStart := time.Now().Truncate(24 * time.Hour)
+	weekStart := time.Now().AddDate(0, 0, -7)
+
+	todayReceived, _ := h.stores.Mails.CountByFolderSince("INBOX", todayStart)
+	todaySent, _ := h.stores.Mails.CountByFolderSince("Sent", todayStart)
+	weekReceived, _ := h.stores.Mails.CountByFolderSince("INBOX", weekStart)
+	weekSent, _ := h.stores.Mails.CountByFolderSince("Sent", weekStart)
+
+	// Ban count: number of currently banned IPs
+	bans, _, _ := h.stores.Bans.List(1, 1000)
+	var banCount int64
+	for _, b := range bans {
+		if b.ExpiresAt.After(time.Now()) {
+			banCount++
+		}
+	}
+
 	currentUser, _ := c.Get("currentUser")
 
 	c.HTML(200, "admin_dashboard", gin.H{
-		"currentUser":  currentUser,
-		"domainCount":  domainCount,
-		"userCount":    userCount,
-		"activeFolder": "admin",
+		"currentUser":    currentUser,
+		"domainCount":   domainCount,
+		"userCount":     userCount,
+		"totalMails":   totalMails,
+		"inboxCount":    inboxCount,
+		"sentCount":     sentCount,
+		"draftsCount":  draftsCount,
+		"trashCount":   trashCount,
+		"totalSize":     totalSize,
+		"inboxSize":    inboxSize,
+		"sentSize":     sentSize,
+		"todayReceived": todayReceived,
+		"todaySent":     todaySent,
+		"weekReceived":  weekReceived,
+		"weekSent":      weekSent,
+		"banCount":      banCount,
+		"activeFolder":  "admin",
 	})
 }
 
@@ -63,7 +108,7 @@ func (h *AdminHandler) ListDomains(c *gin.Context) {
 		"page":         page,
 		"pageSize":     20,
 		"totalPages":   totalPages,
-		"activeFolder": "admin",
+		"activeFolder": "domains",
 	})
 }
 
@@ -73,7 +118,7 @@ func (h *AdminHandler) NewDomain(c *gin.Context) {
 
 	c.HTML(200, "admin_domain_form", gin.H{
 		"currentUser":  currentUser,
-		"activeFolder": "admin",
+		"activeFolder": "domains",
 		"error":        "",
 		"isEdit":       false,
 		"domain":       &db.Domain{},
@@ -92,7 +137,7 @@ func (h *AdminHandler) CreateDomain(c *gin.Context) {
 		currentUser, _ := c.Get("currentUser")
 		c.HTML(http.StatusBadRequest, "admin_domain_form", gin.H{
 			"currentUser":  currentUser,
-			"activeFolder": "admin",
+			"activeFolder": "domains",
 			"error":        "请输入域名",
 			"isEdit":       false,
 			"domain": &db.Domain{
@@ -114,13 +159,91 @@ func (h *AdminHandler) CreateDomain(c *gin.Context) {
 		TlsEnabled: tlsEnabled,
 	}
 
+	// 自动生成 DKIM 密钥对
+	privKey, pubKey, err := dkim.GenerateKeyPair()
+	if err != nil {
+		log.Printf("DKIM密钥生成失败: %v", err)
+	} else {
+		domain.DkimSelector = "default"
+		domain.DkimPrivateKey = privKey
+		domain.DkimPublicKey = pubKey
+	}
+
 	if err := h.stores.Domains.Create(domain); err != nil {
 		currentUser, _ := c.Get("currentUser")
 		c.HTML(http.StatusBadRequest, "admin_domain_form", gin.H{
 			"currentUser":  currentUser,
-			"activeFolder": "admin",
+			"activeFolder": "domains",
 			"error":        fmt.Sprintf("创建域名失败: %v", err),
 			"isEdit":       false,
+			"domain":       domain,
+		})
+		return
+	}
+
+	c.Redirect(http.StatusFound, "/admin/domains")
+}
+
+// EditDomain 渲染编辑域名表单
+func (h *AdminHandler) EditDomain(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.String(http.StatusBadRequest, "无效的域名ID")
+		return
+	}
+
+	domain, err := h.stores.Domains.GetByID(uint(id))
+	if err != nil {
+		c.String(http.StatusNotFound, "域名不存在")
+		return
+	}
+
+	currentUser, _ := c.Get("currentUser")
+	c.HTML(200, "admin_domain_form", gin.H{
+		"currentUser":  currentUser,
+		"activeFolder": "domains",
+		"error":        "",
+		"isEdit":       true,
+		"domain":       domain,
+	})
+}
+
+// UpdateDomain 处理编辑域名表单提交
+func (h *AdminHandler) UpdateDomain(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.String(http.StatusBadRequest, "无效的域名ID")
+		return
+	}
+
+	domain, err := h.stores.Domains.GetByID(uint(id))
+	if err != nil {
+		c.String(http.StatusNotFound, "域名不存在")
+		return
+	}
+
+	domain.SmtpPort = formIntOrDefault(c, "smtp_port", domain.SmtpPort)
+	domain.ImapPort = formIntOrDefault(c, "imap_port", domain.ImapPort)
+	domain.Pop3Port = formIntOrDefault(c, "pop3_port", domain.Pop3Port)
+	domain.TlsEnabled = c.PostForm("tls_enabled") == "on"
+
+	// 重新生成DKIM
+	if c.PostForm("regenerate_dkim") == "on" {
+		privKey, pubKey, err := dkim.GenerateKeyPair()
+		if err == nil {
+			domain.DkimPrivateKey = privKey
+			domain.DkimPublicKey = pubKey
+			domain.DkimSelector = "default"
+		}
+	}
+
+	if err := h.stores.Domains.Update(domain); err != nil {
+		currentUser, _ := c.Get("currentUser")
+		c.HTML(http.StatusBadRequest, "admin_domain_form", gin.H{
+			"currentUser":  currentUser,
+			"activeFolder": "domains",
+			"error":        fmt.Sprintf("更新域名失败: %v", err),
+			"isEdit":       true,
 			"domain":       domain,
 		})
 		return
@@ -163,8 +286,9 @@ func (h *AdminHandler) DNSHint(c *gin.Context) {
 
 	c.HTML(200, "admin_dns_hint", gin.H{
 		"currentUser":  currentUser,
-		"activeFolder": "admin",
+		"activeFolder": "domains",
 		"domain":       domain,
+		"dkimRecord":   dkim.GetDKIMDNSRecord(domain.DkimPublicKey),
 	})
 }
 
@@ -199,7 +323,7 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 		"page":         page,
 		"pageSize":     20,
 		"totalPages":   totalPages,
-		"activeFolder": "admin",
+		"activeFolder": "users",
 	})
 }
 
@@ -211,7 +335,7 @@ func (h *AdminHandler) NewUser(c *gin.Context) {
 
 	c.HTML(200, "admin_user_form", gin.H{
 		"currentUser":  currentUser,
-		"activeFolder": "admin",
+		"activeFolder": "users",
 		"error":        "",
 		"isEdit":       false,
 		"domains":      domains,
@@ -232,7 +356,7 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 		currentUser, _ := c.Get("currentUser")
 		c.HTML(http.StatusBadRequest, "admin_user_form", gin.H{
 			"currentUser":  currentUser,
-			"activeFolder": "admin",
+			"activeFolder": "users",
 			"error":        "请填写所有必填字段",
 			"isEdit":       false,
 			"domains":      domains,
@@ -252,7 +376,7 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 		currentUser, _ := c.Get("currentUser")
 		c.HTML(http.StatusInternalServerError, "admin_user_form", gin.H{
 			"currentUser":  currentUser,
-			"activeFolder": "admin",
+			"activeFolder": "users",
 			"error":        "密码加密失败",
 			"isEdit":       false,
 			"domains":      domains,
@@ -282,7 +406,7 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 		currentUser, _ := c.Get("currentUser")
 		c.HTML(http.StatusBadRequest, "admin_user_form", gin.H{
 			"currentUser":  currentUser,
-			"activeFolder": "admin",
+			"activeFolder": "users",
 			"error":        fmt.Sprintf("创建用户失败: %v", err),
 			"isEdit":       false,
 			"domains":      domains,
@@ -335,7 +459,7 @@ func (h *AdminHandler) EditUser(c *gin.Context) {
 
 	c.HTML(200, "admin_user_form", gin.H{
 		"currentUser":  currentUser,
-		"activeFolder": "admin",
+		"activeFolder": "users",
 		"error":        "",
 		"isEdit":       true,
 		"domains":      domains,
@@ -380,7 +504,7 @@ func (h *AdminHandler) UpdateUser(c *gin.Context) {
 			currentUser, _ := c.Get("currentUser")
 			c.HTML(http.StatusInternalServerError, "admin_user_form", gin.H{
 				"currentUser":  currentUser,
-				"activeFolder": "admin",
+				"activeFolder": "users",
 				"error":        "密码加密失败",
 				"isEdit":       true,
 				"domains":      domains,
@@ -396,7 +520,7 @@ func (h *AdminHandler) UpdateUser(c *gin.Context) {
 		currentUser, _ := c.Get("currentUser")
 		c.HTML(http.StatusBadRequest, "admin_user_form", gin.H{
 			"currentUser":  currentUser,
-			"activeFolder": "admin",
+			"activeFolder": "users",
 			"error":        fmt.Sprintf("更新用户失败: %v", err),
 			"isEdit":       true,
 			"domains":      domains,
@@ -406,6 +530,104 @@ func (h *AdminHandler) UpdateUser(c *gin.Context) {
 	}
 
 	c.Redirect(http.StatusFound, "/admin/users")
+}
+
+// ListBans renders the IP ban list page.
+func (h *AdminHandler) ListBans(c *gin.Context) {
+	// Clean up expired entries first
+	h.stores.Bans.Cleanup()
+
+	page := getPageParam(c, "page", 1)
+
+	bans, total, err := h.stores.Bans.List(page, 20)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "加载黑名单失败: %v", err)
+		return
+	}
+
+	currentUser, _ := c.Get("currentUser")
+
+	totalPages := int(total) / 20
+	if int(total)%20 > 0 {
+		totalPages++
+	}
+	if totalPages < 1 {
+		totalPages = 0
+	}
+
+	c.HTML(200, "admin_bans", gin.H{
+		"currentUser":  currentUser,
+		"bans":         bans,
+		"total":        total,
+		"page":         page,
+		"pageSize":     20,
+		"totalPages":   totalPages,
+		"activeFolder": "bans",
+	})
+}
+
+// UnbanIP removes a ban entry by ID.
+func (h *AdminHandler) UnbanIP(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.String(http.StatusBadRequest, "无效的记录ID")
+		return
+	}
+
+	if err := h.stores.Bans.Delete(uint(id)); err != nil {
+		c.String(http.StatusInternalServerError, "解封失败: %v", err)
+		return
+	}
+
+	c.Redirect(http.StatusFound, "/admin/bans")
+}
+
+// CleanupBans removes all expired ban entries.
+func (h *AdminHandler) CleanupBans(c *gin.Context) {
+	h.stores.Bans.Cleanup()
+	c.Redirect(http.StatusFound, "/admin/bans")
+}
+
+// ListMails renders the admin mail list page showing all messages across all users.
+func (h *AdminHandler) ListMails(c *gin.Context) {
+	page := getPageParam(c, "page", 1)
+	folder := c.Query("folder")
+
+	var messages []db.Message
+	var total int64
+	var err error
+
+	if folder != "" {
+		messages, total, err = h.stores.Mails.ListAllByFolder(folder, page, 20)
+	} else {
+		messages, total, err = h.stores.Mails.ListAll(page, 20)
+	}
+
+	if err != nil {
+		c.String(http.StatusInternalServerError, "加载邮件列表失败: %v", err)
+		return
+	}
+
+	currentUser, _ := c.Get("currentUser")
+
+	totalPages := int(total) / 20
+	if int(total)%20 > 0 {
+		totalPages++
+	}
+	if totalPages < 1 {
+		totalPages = 0
+	}
+
+	c.HTML(200, "admin_mails", gin.H{
+		"currentUser":  currentUser,
+		"messages":     messages,
+		"total":        total,
+		"page":         page,
+		"pageSize":     20,
+		"totalPages":   totalPages,
+		"folder":       folder,
+		"activeFolder": "mails",
+	})
 }
 
 // formIntOrDefault extracts an integer from a form field, returning the default if missing/invalid.

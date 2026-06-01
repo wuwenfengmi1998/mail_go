@@ -26,16 +26,19 @@ func (User) TableName() string {
 
 // Domain represents a mail domain in the system.
 type Domain struct {
-	ID          uint      `gorm:"primaryKey" json:"id"`
-	Name        string    `gorm:"size:255;uniqueIndex;not null" json:"name"`
-	SmtpPort    int       `gorm:"default:25" json:"smtp_port"`
-	ImapPort    int       `gorm:"default:143" json:"imap_port"`
-	Pop3Port    int       `gorm:"default:110" json:"pop3_port"`
-	TlsCertPath string    `gorm:"size:512" json:"tls_cert_path"`
-	TlsKeyPath  string    `gorm:"size:512" json:"tls_key_path"`
-	TlsEnabled  bool      `gorm:"default:false" json:"tls_enabled"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID             uint      `gorm:"primaryKey" json:"id"`
+	Name           string    `gorm:"size:255;uniqueIndex;not null" json:"name"`
+	SmtpPort       int       `gorm:"default:25" json:"smtp_port"`
+	ImapPort       int       `gorm:"default:143" json:"imap_port"`
+	Pop3Port       int       `gorm:"default:110" json:"pop3_port"`
+	TlsCertPath    string    `gorm:"size:512" json:"tls_cert_path"`
+	TlsKeyPath     string    `gorm:"size:512" json:"tls_key_path"`
+	TlsEnabled     bool      `gorm:"default:false" json:"tls_enabled"`
+	DkimSelector   string    `gorm:"size:64;default:default" json:"dkim_selector"`
+	DkimPrivateKey string    `gorm:"size:4096" json:"-"`
+	DkimPublicKey  string    `gorm:"size:1024" json:"-"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // TableName specifies the table name for Domain.
@@ -66,6 +69,20 @@ type Message struct {
 func (Message) TableName() string {
 	return "messages"
 }
+
+// BanEntry represents an IP address that has been banned due to excessive login failures.
+type BanEntry struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	IPAddress string    `gorm:"size:45;index;not null" json:"ip_address"`
+	Reason    string    `gorm:"size:255" json:"reason"`
+	FailCount int       `gorm:"default:0" json:"fail_count"`
+	ExpiresAt time.Time `gorm:"index" json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// TableName specifies the table name for BanEntry.
+func (BanEntry) TableName() string { return "ban_entries" }
 
 // Attachment represents a file attached to an email message.
 type Attachment struct {

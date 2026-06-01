@@ -108,7 +108,17 @@ func (h *MailHandler) View(c *gin.Context) {
 
 // Compose renders the email composition page.
 func (h *MailHandler) Compose(c *gin.Context) {
+	userID := c.GetUint("userID")
 	currentUser, _ := c.Get("currentUser")
+
+	// Get user quota info for display
+	user, _ := h.stores.Users.GetByID(userID)
+	var usedBytes int64
+	var quotaBytes int64
+	if user != nil {
+		usedBytes = user.UsedBytes
+		quotaBytes = user.QuotaBytes
+	}
 
 	c.HTML(200, "compose", gin.H{
 		"currentUser":  currentUser,
@@ -116,6 +126,9 @@ func (h *MailHandler) Compose(c *gin.Context) {
 		"error":        "",
 		"to":           c.Query("to"),
 		"subject":      c.Query("subject"),
+		"bodyContent":  "",
+		"usedBytes":    usedBytes,
+		"quotaBytes":   quotaBytes,
 	})
 }
 
@@ -129,6 +142,7 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 	to := c.PostForm("to")
 	subject := c.PostForm("subject")
 	body := c.PostForm("body")
+	htmlBody := c.PostForm("html_body")
 	cc := c.PostForm("cc")
 
 	if to == "" {
@@ -139,8 +153,41 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 			"to":           to,
 			"subject":      subject,
 			"cc":           cc,
+			"bodyContent":  htmlBody,
+			"usedBytes":    currentUser.UsedBytes,
+			"quotaBytes":   currentUser.QuotaBytes,
 		})
 		return
+	}
+
+	// Handle attachments and check quota
+	form, multipartErr := c.MultipartForm()
+	if multipartErr == nil {
+		files := form.File["attachments"]
+		if len(files) > 0 {
+			// Check attachment quota before saving
+			user, _ := h.stores.Users.GetByID(userID)
+			if user != nil {
+				var totalNewSize int64
+				for _, file := range files {
+					totalNewSize += file.Size
+				}
+				if user.UsedBytes+totalNewSize > user.QuotaBytes {
+					c.HTML(http.StatusBadRequest, "compose", gin.H{
+						"currentUser":  currentUser,
+						"activeFolder": "compose",
+						"error":        fmt.Sprintf("附件超出配额限制。已用 %s / 总配额 %s", formatBytes(user.UsedBytes), formatBytes(user.QuotaBytes)),
+						"to":           to,
+						"subject":      subject,
+						"cc":           cc,
+						"bodyContent":  htmlBody,
+						"usedBytes":    user.UsedBytes,
+						"quotaBytes":   user.QuotaBytes,
+					})
+					return
+				}
+			}
+		}
 	}
 
 	// Build the email content
@@ -159,9 +206,24 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 	sb.WriteString(fmt.Sprintf("Message-ID: %s\r\n", messageID))
 	sb.WriteString(fmt.Sprintf("Date: %s\r\n", now.Format(time.RFC1123Z)))
 	sb.WriteString("MIME-Version: 1.0\r\n")
-	sb.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
-	sb.WriteString("\r\n")
-	sb.WriteString(body)
+
+	// Build message body with multipart/alternative if HTML is present
+	if htmlBody != "" {
+		boundary := fmt.Sprintf("----=_Part_%s", uuid.New().String())
+		sb.WriteString(fmt.Sprintf("Content-Type: multipart/alternative; boundary=\"%s\"\r\n", boundary))
+		sb.WriteString("\r\n")
+		sb.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+		sb.WriteString("Content-Type: text/plain; charset=utf-8\r\n\r\n")
+		sb.WriteString(body)
+		sb.WriteString(fmt.Sprintf("\r\n--%s\r\n", boundary))
+		sb.WriteString("Content-Type: text/html; charset=utf-8\r\n\r\n")
+		sb.WriteString(htmlBody)
+		sb.WriteString(fmt.Sprintf("\r\n--%s--\r\n", boundary))
+	} else {
+		sb.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
+		sb.WriteString("\r\n")
+		sb.WriteString(body)
+	}
 
 	// Send via local SMTP
 	err := smtp.SendMail("localhost:25", nil, fromAddr, strings.Split(to, ","), []byte(sb.String()))
@@ -180,6 +242,7 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 		CcAddr:    cc,
 		Subject:   subject,
 		TextBody:  body,
+		HtmlBody:  htmlBody,
 		Date:      now,
 		IsRead:    true,
 	}
@@ -192,13 +255,15 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 			"to":           to,
 			"subject":      subject,
 			"cc":           cc,
+			"bodyContent":  htmlBody,
+			"usedBytes":    currentUser.UsedBytes,
+			"quotaBytes":   currentUser.QuotaBytes,
 		})
 		return
 	}
 
 	// Handle attachments
-	form, err := c.MultipartForm()
-	if err == nil {
+	if multipartErr == nil {
 		files := form.File["attachments"]
 		for _, file := range files {
 			// Read file content
@@ -233,6 +298,8 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 				FileSize:    file.Size,
 			}
 			_ = h.stores.Attachments.Create(att)
+			// Update user used bytes
+			_ = h.stores.Users.UpdateUsedBytes(userID, att.FileSize)
 		}
 	}
 
@@ -306,10 +373,11 @@ func (h *MailHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	// Delete attachments on disk and in DB
+	// Delete attachments on disk and in DB, and decrease UsedBytes
 	attachments, _ := h.stores.Attachments.ListByMessage(uint(id))
 	for _, att := range attachments {
 		_ = h.storage.Delete(att.FilePath)
+		_ = h.stores.Users.UpdateUsedBytes(userID, -att.FileSize)
 	}
 	_ = h.stores.Attachments.DeleteByMessage(uint(id))
 	_ = h.stores.Mails.Delete(uint(id))
@@ -518,4 +586,19 @@ func resolveActiveFolder(folder string) string {
 	default:
 		return folder
 	}
+}
+
+// formatBytes converts a file size in bytes to a human-readable string.
+// This is a handler-level utility that reuses the web package function.
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }

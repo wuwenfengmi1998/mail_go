@@ -1,0 +1,77 @@
+{{define "admin_mails"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>所有邮件 - MailGo</title>
+    {{template "styles" .}}
+</head>
+<body>
+    {{template "navbar" .}}
+    <div class="container">
+        <div class="clearfix">
+            <div class="sidebar">
+                <a href="/inbox">返回邮箱</a>
+                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>控制面板</a>
+                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>域名管理</a>
+                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>用户管理</a>
+                <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>所有邮件</a>
+                <a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>IP黑名单</a>
+            </div>
+            <div class="content">
+                <div class="card">
+                    <h2 style="margin-bottom:16px;">所有邮件</h2>
+                    <div style="margin-bottom:16px;">
+                        <a href="/admin/mails" {{if eq .folder ""}}class="btn btn-primary"{{else}}class="btn" style="background:#ecf0f1;color:#333;"{{end}}>全部</a>
+                        <a href="/admin/mails?folder=INBOX" {{if eq .folder "INBOX"}}class="btn btn-primary"{{else}}class="btn" style="background:#ecf0f1;color:#333;"{{end}}>INBOX</a>
+                        <a href="/admin/mails?folder=Sent" {{if eq .folder "Sent"}}class="btn btn-primary"{{else}}class="btn" style="background:#ecf0f1;color:#333;"{{end}}>Sent</a>
+                        <a href="/admin/mails?folder=Drafts" {{if eq .folder "Drafts"}}class="btn btn-primary"{{else}}class="btn" style="background:#ecf0f1;color:#333;"{{end}}>Drafts</a>
+                        <a href="/admin/mails?folder=Trash" {{if eq .folder "Trash"}}class="btn btn-primary"{{else}}class="btn" style="background:#ecf0f1;color:#333;"{{end}}>Trash</a>
+                    </div>
+                    {{if not .messages}}
+                    <p style="color:#7f8c8d;text-align:center;padding:40px 0;">暂无邮件</p>
+                    {{else}}
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>发件人</th>
+                                <th>收件人</th>
+                                <th>主题</th>
+                                <th>所属用户</th>
+                                <th>文件夹</th>
+                                <th>日期</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        {{range .messages}}
+                            <tr>
+                                <td>{{.FromAddr}}</td>
+                                <td>{{.ToAddr}}</td>
+                                <td>{{.Subject}}</td>
+                                <td>{{if .User.ID}}{{.User.Username}}{{else}}—{{end}}</td>
+                                <td>{{.Folder}}</td>
+                                <td>{{.Date.Format "2006-01-02 15:04"}}</td>
+                            </tr>
+                        {{end}}
+                        </tbody>
+                    </table>
+                    {{end}}
+                </div>
+                {{if .totalPages}}
+                <div class="pagination">
+                    {{if gt .page 1}}
+                    <a href="/admin/mails?page={{sub .page 1}}{{if .folder}}&folder={{.folder}}{{end}}">上一页</a>
+                    {{end}}
+                    <span>第 {{.page}} / {{.totalPages}} 页</span>
+                    {{if lt .page .totalPages}}
+                    <a href="/admin/mails?page={{add .page 1}}{{if .folder}}&folder={{.folder}}{{end}}">下一页</a>
+                    {{end}}
+                </div>
+                {{end}}
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+{{end}}

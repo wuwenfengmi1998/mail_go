@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"time"
 
 	"mail_go/internal/db"
 
@@ -28,6 +29,13 @@ type MailStore interface {
 	MoveToFolder(id uint, folder string) error
 	Delete(id uint) error
 	CountUnread(userID uint, folder string) (int64, error)
+	CountByFolder(folder string) (int64, error)
+	CountAll() (int64, error)
+	TotalSizeByFolder(folder string) (int64, error)
+	TotalSize() (int64, error)
+	CountByFolderSince(folder string, since time.Time) (int64, error)
+	ListAll(page, size int) ([]db.Message, int64, error)
+	ListAllByFolder(folder string, page, size int) ([]db.Message, int64, error)
 }
 
 // mailStoreGorm implements MailStore using GORM.
@@ -122,4 +130,91 @@ func (s *mailStoreGorm) CountByUserAndFolder(userID uint, folder string) (int64,
 		return 0, err
 	}
 	return count, nil
+}
+
+// CountByFolder returns the total count of messages in a given folder.
+func (s *mailStoreGorm) CountByFolder(folder string) (int64, error) {
+	var count int64
+	if err := s.db.Model(&db.Message{}).Where("folder = ?", folder).Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// CountAll returns the total count of all messages.
+func (s *mailStoreGorm) CountAll() (int64, error) {
+	var count int64
+	if err := s.db.Model(&db.Message{}).Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// TotalSizeByFolder returns the total size (in bytes) of message bodies in a given folder.
+func (s *mailStoreGorm) TotalSizeByFolder(folder string) (int64, error) {
+	var total int64
+	err := s.db.Model(&db.Message{}).
+		Where("folder = ?", folder).
+		Select("COALESCE(SUM(LENGTH(text_body) + LENGTH(html_body)), 0)").
+		Scan(&total).Error
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// TotalSize returns the total size (in bytes) of all message bodies.
+func (s *mailStoreGorm) TotalSize() (int64, error) {
+	var total int64
+	err := s.db.Model(&db.Message{}).
+		Select("COALESCE(SUM(LENGTH(text_body) + LENGTH(html_body)), 0)").
+		Scan(&total).Error
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// CountByFolderSince returns the count of messages in a folder since a given time.
+func (s *mailStoreGorm) CountByFolderSince(folder string, since time.Time) (int64, error) {
+	var count int64
+	if err := s.db.Model(&db.Message{}).
+		Where("folder = ? AND created_at >= ?", folder, since).
+		Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// ListAll retrieves a paginated list of all messages across all users.
+func (s *mailStoreGorm) ListAll(page, size int) ([]db.Message, int64, error) {
+	var messages []db.Message
+	var total int64
+
+	if err := s.db.Model(&db.Message{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * size
+	if err := s.db.Preload("User").Order("date DESC").Offset(offset).Limit(size).Find(&messages).Error; err != nil {
+		return nil, 0, err
+	}
+	return messages, total, nil
+}
+
+// ListAllByFolder retrieves a paginated list of all messages in a given folder across all users.
+func (s *mailStoreGorm) ListAllByFolder(folder string, page, size int) ([]db.Message, int64, error) {
+	var messages []db.Message
+	var total int64
+
+	query := s.db.Where("folder = ?", folder)
+	if err := query.Model(&db.Message{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * size
+	if err := s.db.Preload("User").Where("folder = ?", folder).Order("date DESC").Offset(offset).Limit(size).Find(&messages).Error; err != nil {
+		return nil, 0, err
+	}
+	return messages, total, nil
 }
