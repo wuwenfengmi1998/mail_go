@@ -9,6 +9,7 @@ import (
 
 	"mail_go/internal/db"
 	"mail_go/internal/dkim"
+	"mail_go/internal/storage"
 	"mail_go/internal/store"
 
 	"github.com/gin-gonic/gin"
@@ -17,12 +18,13 @@ import (
 
 // AdminHandler handles admin-related routes (dashboard, domain/user management).
 type AdminHandler struct {
-	stores *store.Stores
+	stores  *store.Stores
+	storage *storage.AttachmentStorage
 }
 
-// NewAdminHandler creates a new AdminHandler with the given stores.
-func NewAdminHandler(stores *store.Stores) *AdminHandler {
-	return &AdminHandler{stores: stores}
+// NewAdminHandler creates a new AdminHandler with the given stores and attachment storage.
+func NewAdminHandler(stores *store.Stores, attStorage *storage.AttachmentStorage) *AdminHandler {
+	return &AdminHandler{stores: stores, storage: attStorage}
 }
 
 // Dashboard renders the admin dashboard with summary statistics.
@@ -629,6 +631,59 @@ func (h *AdminHandler) ListMails(c *gin.Context) {
 		"activeFolder": "mails",
 	})
 }
+
+// AdminViewMail renders the detail view of a specific mail for admin.
+func (h *AdminHandler) AdminViewMail(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.String(http.StatusBadRequest, "无效的邮件ID")
+		return
+	}
+
+	msg, err := h.stores.Mails.GetByID(uint(id))
+	if err != nil {
+		c.String(http.StatusNotFound, "邮件不存在")
+		return
+	}
+
+	// 加载附件
+	attachments, _ := h.stores.Attachments.ListByMessage(uint(id))
+
+	currentUser, _ := c.Get("currentUser")
+
+	c.HTML(200, "admin_mail_view", gin.H{
+		"currentUser":  currentUser,
+		"message":      msg,
+		"attachments":  attachments,
+		"activeFolder": "mails",
+	})
+}
+
+// AdminDownloadAttachment serves an attachment file for admin (bypasses user ownership check).
+func (h *AdminHandler) AdminDownloadAttachment(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.String(http.StatusBadRequest, "无效的附件ID")
+		return
+	}
+
+	att, err := h.stores.Attachments.GetByID(uint(id))
+	if err != nil {
+		c.String(http.StatusNotFound, "附件不存在")
+		return
+	}
+
+	data, err := h.storage.Read(att.FilePath)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "读取附件失败")
+		return
+	}
+
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", att.FileName))
+	c.Data(http.StatusOK, att.ContentType, data)
+}
+
+// formIntOrDefault extracts an integer from a form field, returning the default if missing/invalid.
 
 // formIntOrDefault extracts an integer from a form field, returning the default if missing/invalid.
 func formIntOrDefault(c *gin.Context, key string, defaultVal int) int {

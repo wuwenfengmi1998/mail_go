@@ -1,0 +1,60 @@
+{{define "admin_mail_view"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>查看邮件 - MailGo 管理后台</title>
+    {{template "styles" .}}
+</head>
+<body>
+    {{template "navbar" .}}
+    <div class="container">
+        <div class="clearfix">
+            <div class="sidebar">
+                <a href="/inbox">返回邮箱</a>
+                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>控制面板</a>
+                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>域名管理</a>
+                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>用户管理</a>
+                <a href="/admin/mails" class="active">所有邮件</a>
+                <a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>IP黑名单</a>
+            </div>
+            <div class="content">
+                <div class="card">
+                    <div style="margin-bottom:16px;">
+                        <a href="/admin/mails" class="btn" style="background:#bdc3c7;color:#fff;">返回邮件列表</a>
+                    </div>
+                    <h2>{{if .message.Subject}}{{.message.Subject}}{{else}}(无主题){{end}}</h2>
+                    <div class="mail-meta" style="margin-top:12px;">
+                        <p><strong>发件人:</strong> {{.message.FromAddr}}</p>
+                        <p><strong>收件人:</strong> {{.message.ToAddr}}</p>
+                        {{if .message.CcAddr}}<p><strong>抄送:</strong> {{.message.CcAddr}}</p>{{end}}
+                        <p><strong>所属用户:</strong> {{if .message.User.ID}}{{.message.User.Username}}{{else}}—{{end}}</p>
+                        <p><strong>文件夹:</strong> {{.message.Folder}}</p>
+                        <p><strong>时间:</strong> {{.message.Date.Format "2006-01-02 15:04:05"}}</p>
+                    </div>
+                    <div class="mail-body">
+                        {{if .message.HtmlBody}}
+                        {{.message.HtmlBody | safeHTML}}
+                        {{else}}
+                        <pre style="white-space:pre-wrap;font-family:inherit;">{{.message.TextBody}}</pre>
+                        {{end}}
+                    </div>
+                    {{if .attachments}}
+                    <div class="attachment-list">
+                        <h4 style="margin-bottom:8px;">附件</h4>
+                        {{range .attachments}}
+                        <div class="attachment-item">
+                            📎 <a href="/admin/attachment/{{.ID}}">{{.FileName}}</a>
+                            <span style="color:#7f8c8d;font-size:12px;">({{formatBytes .FileSize}})</span>
+                        </div>
+                        {{end}}
+                    </div>
+                    {{end}}
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+{{end}}

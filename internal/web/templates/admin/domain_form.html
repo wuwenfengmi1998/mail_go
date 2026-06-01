@@ -46,10 +46,19 @@
                         </div>
                         <div class="form-group">
                             <label>
-                                <input type="checkbox" name="tls_enabled" {{if .domain.TlsEnabled}}checked{{end}}>
+                                <input type="checkbox" name="tls_enabled" id="tls_enabled" {{if .domain.TlsEnabled}}checked{{end}} onchange="togglePorts()">
                                 启用 TLS
                             </label>
+                            <p style="color:#7f8c8d;font-size:12px;margin-top:4px;">勾选后端口将自动切换为 SSL/TLS 标准端口</p>
                         </div>
+                        <script>
+                        function togglePorts() {
+                            var tls = document.getElementById('tls_enabled').checked;
+                            document.querySelector('input[name="smtp_port"]').value = tls ? 465 : 25;
+                            document.querySelector('input[name="imap_port"]').value = tls ? 993 : 143;
+                            document.querySelector('input[name="pop3_port"]').value = tls ? 995 : 110;
+                        }
+                        </script>
                         {{if .isEdit}}
                         <div class="form-group">
                             <label>

@@ -112,7 +112,7 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 func (ws *WebServer) registerRoutes() {
 	authHandler := handlers.NewAuthHandler(ws.stores, ws.authCfg, ws.banCfg)
 	mailHandler := handlers.NewMailHandler(ws.stores, ws.storage)
-	adminHandler := handlers.NewAdminHandler(ws.stores)
+	adminHandler := handlers.NewAdminHandler(ws.stores, ws.storage)
 
 	// Apply BanMiddleware globally before public routes
 	ws.engine.Use(middleware.BanMiddleware(ws.stores))
@@ -170,6 +170,8 @@ func (ws *WebServer) registerRoutes() {
 		admin.GET("/users/:id/edit", adminHandler.EditUser)
 		admin.POST("/users/:id", adminHandler.UpdateUser)
 		admin.GET("/mails", adminHandler.ListMails)
+		admin.GET("/mails/:id", adminHandler.AdminViewMail)
+		admin.GET("/attachment/:id", adminHandler.AdminDownloadAttachment)
 		admin.GET("/bans", adminHandler.ListBans)
 		admin.POST("/bans/:id/unban", adminHandler.UnbanIP)
 		admin.POST("/bans/cleanup", adminHandler.CleanupBans)
