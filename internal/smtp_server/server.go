@@ -11,6 +11,7 @@ import (
 
 	"mail_go/config"
 	"mail_go/internal/db"
+	"mail_go/internal/mailutil"
 	"mail_go/internal/store"
 	"mail_go/internal/storage"
 
@@ -166,12 +167,12 @@ func (s *smtpSession) Data(r io.Reader) error {
 		return fmt.Errorf("failed to parse MIME message: %w", err)
 	}
 
-	// Extract headers from the top-level mail header
+	// Extract headers — 使用 AddressList 解码 RFC 2047 编码的地址
 	header := mr.Header
 
-	fromAddr := header.Get("From")
-	toAddr := header.Get("To")
-	ccAddr := header.Get("Cc")
+	fromAddr := mailutil.FormatAddressList(&header, "From")
+	toAddr := mailutil.FormatAddressList(&header, "To")
+	ccAddr := mailutil.FormatAddressList(&header, "Cc")
 	subject, _ := header.Subject()
 	messageID, _ := header.MessageID()
 	date, _ := header.Date()
@@ -195,16 +196,22 @@ func (s *smtpSession) Data(r io.Reader) error {
 
 		switch h := p.Header.(type) {
 		case *mail.InlineHeader:
-			contentType, _, _ := h.ContentType()
+			contentType, params, _ := h.ContentType()
 			buf, readErr := io.ReadAll(p.Body)
 			if readErr != nil {
 				log.Printf("SMTP: error reading inline part: %v", readErr)
 				continue
 			}
+			// 检测并转换字符集
+			charset := ""
+			if cs, ok := params["charset"]; ok {
+				charset = cs
+			}
+			decoded := mailutil.DecodeCharset(buf, charset)
 			if strings.HasPrefix(contentType, "text/plain") {
-				textBody = string(buf)
+				textBody = decoded
 			} else if strings.HasPrefix(contentType, "text/html") {
-				htmlBody = string(buf)
+				htmlBody = decoded
 			}
 
 		case *mail.AttachmentHeader:
@@ -257,6 +264,7 @@ func (s *smtpSession) Data(r io.Reader) error {
 			Subject:   subject,
 			TextBody:  textBody,
 			HtmlBody:  htmlBody,
+			RawData:   string(data),
 			IsRead:    false,
 			IsFlagged: false,
 			Date:      date,

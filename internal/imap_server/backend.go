@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"mail_go/internal/db"
+	"mail_go/internal/mailutil"
 	"mail_go/internal/store"
 
 	"github.com/emersion/go-imap"
@@ -502,9 +503,9 @@ func (m *imapMailbox) CreateMessage(flags []string, date time.Time, body imap.Li
 	}
 
 	header := mr.Header
-	fromAddr := header.Get("From")
-	toAddr := header.Get("To")
-	ccAddr := header.Get("Cc")
+	fromAddr := mailutil.FormatAddressList(&header, "From")
+	toAddr := mailutil.FormatAddressList(&header, "To")
+	ccAddr := mailutil.FormatAddressList(&header, "Cc")
 	subject, _ := header.Subject()
 	messageID, _ := header.MessageID()
 	msgDate, _ := header.Date()
@@ -527,12 +528,18 @@ func (m *imapMailbox) CreateMessage(flags []string, date time.Time, body imap.Li
 
 		switch h := p.Header.(type) {
 		case *asgomail.InlineHeader:
-			contentType, _, _ := h.ContentType()
+			contentType, params, _ := h.ContentType()
 			buf, _ := io.ReadAll(p.Body)
+			// 检测并转换字符集
+			charset := ""
+			if cs, ok := params["charset"]; ok {
+				charset = cs
+			}
+			decoded := mailutil.DecodeCharset(buf, charset)
 			if strings.HasPrefix(contentType, "text/plain") {
-				textBody = string(buf)
+				textBody = decoded
 			} else if strings.HasPrefix(contentType, "text/html") {
-				htmlBody = string(buf)
+				htmlBody = decoded
 			}
 		case *asgomail.AttachmentHeader:
 			// Attachments from APPEND are not saved in this simple implementation
@@ -565,6 +572,7 @@ func (m *imapMailbox) CreateMessage(flags []string, date time.Time, body imap.Li
 		Subject:   subject,
 		TextBody:  textBody,
 		HtmlBody:  htmlBody,
+		RawData:   string(data),
 		IsRead:    isRead,
 		IsFlagged: isFlagged,
 		Date:      msgDate,
@@ -717,7 +725,14 @@ func parseAddressList(addrStr string) []*imap.Address {
 }
 
 // buildRawMessage reconstructs a raw RFC822 message from a db.Message.
+// If RawData is available, it uses the original raw data directly.
 func buildRawMessage(msg *db.Message) []byte {
+	// 优先使用原始邮件数据
+	if msg.RawData != "" {
+		return []byte(msg.RawData)
+	}
+
+	// 降级：从字段重建
 	var buf bytes.Buffer
 
 	// Write headers

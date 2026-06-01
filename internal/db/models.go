@@ -59,6 +59,7 @@ type Message struct {
 	Subject    string    `gorm:"size:1024" json:"subject"`
 	TextBody   string    `gorm:"type:text" json:"text_body"`
 	HtmlBody   string    `gorm:"type:text" json:"html_body"`
+	RawData    string    `gorm:"type:mediumtext" json:"raw_data"`
 	IsRead     bool      `gorm:"default:false" json:"is_read"`
 	IsFlagged  bool      `gorm:"default:false" json:"is_flagged"`
 	Date       time.Time `json:"date"`
