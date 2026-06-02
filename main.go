@@ -1,8 +1,18 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
 	"log"
+	"math/big"
+	"net"
+	"os"
+	"path/filepath"
+	"time"
 
 	"mail_go/config"
 	"mail_go/internal/db"
@@ -22,26 +32,116 @@ func applyDomainTLSConfig(stores *store.Stores, cfg *config.Config) {
 		return
 	}
 
-	applied := false
-	if cfg.SMTP.TLSCert == "" && cfg.SMTP.TLSKey == "" {
-		cfg.SMTP.TLSCert = domain.TlsCertPath
-		cfg.SMTP.TLSKey = domain.TlsKeyPath
-		applied = true
-	}
-	if cfg.IMAP.TLSCert == "" && cfg.IMAP.TLSKey == "" {
-		cfg.IMAP.TLSCert = domain.TlsCertPath
-		cfg.IMAP.TLSKey = domain.TlsKeyPath
-		applied = true
-	}
-	if cfg.POP3.TLSCert == "" && cfg.POP3.TLSKey == "" {
-		cfg.POP3.TLSCert = domain.TlsCertPath
-		cfg.POP3.TLSKey = domain.TlsKeyPath
-		applied = true
-	}
-
+	applied := applyTLSCertPaths(cfg, domain.TlsCertPath, domain.TlsKeyPath)
 	if applied {
 		log.Printf("使用域名 %s 的 TLS 证书；更新证书后需重启服务生效", domain.Name)
 	}
+}
+
+func applyTLSCertPaths(cfg *config.Config, certPath, keyPath string) bool {
+	applied := false
+	if cfg.SMTP.TLSCert == "" && cfg.SMTP.TLSKey == "" {
+		cfg.SMTP.TLSCert = certPath
+		cfg.SMTP.TLSKey = keyPath
+		applied = true
+	}
+	if cfg.IMAP.TLSCert == "" && cfg.IMAP.TLSKey == "" {
+		cfg.IMAP.TLSCert = certPath
+		cfg.IMAP.TLSKey = keyPath
+		applied = true
+	}
+	if cfg.POP3.TLSCert == "" && cfg.POP3.TLSKey == "" {
+		cfg.POP3.TLSCert = certPath
+		cfg.POP3.TLSKey = keyPath
+		applied = true
+	}
+	return applied
+}
+
+func ensureSelfSignedTLSConfig(cfg *config.Config) {
+	if cfg.SMTP.TLSCert != "" && cfg.SMTP.TLSKey != "" && cfg.IMAP.TLSCert != "" && cfg.IMAP.TLSKey != "" && cfg.POP3.TLSCert != "" && cfg.POP3.TLSKey != "" {
+		return
+	}
+
+	certPath := filepath.Join(cfg.Storage.BaseDir, "tls", "self-signed", "cert.pem")
+	keyPath := filepath.Join(cfg.Storage.BaseDir, "tls", "self-signed", "key.pem")
+	if err := ensureSelfSignedCert(certPath, keyPath, cfg.SMTP.Domain); err != nil {
+		log.Printf("生成自签名 TLS 证书失败: %v", err)
+		return
+	}
+
+	if applyTLSCertPaths(cfg, certPath, keyPath) {
+		log.Printf("未配置 TLS 证书，已使用自签名证书启动 TLS 端口；正式使用请在后台上传受信任证书")
+	}
+}
+
+func ensureSelfSignedCert(certPath, keyPath, domain string) error {
+	if _, certErr := os.Stat(certPath); certErr == nil {
+		if _, keyErr := os.Stat(keyPath); keyErr == nil {
+			return nil
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(certPath), 0700); err != nil {
+		return err
+	}
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return err
+	}
+
+	notBefore := time.Now()
+	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serialNumber, err := rand.Int(rand.Reader, serialLimit)
+	if err != nil {
+		return err
+	}
+
+	if domain == "" {
+		domain = "localhost"
+	}
+	template := x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			Organization: []string{"MailGo Self-Signed"},
+			CommonName:   domain,
+		},
+		NotBefore:             notBefore,
+		NotAfter:              notBefore.AddDate(10, 0, 0),
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		DNSNames:              []string{domain, "localhost"},
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		return err
+	}
+
+	certFile, err := os.OpenFile(certPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	if err := pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		certFile.Close()
+		return err
+	}
+	if err := certFile.Close(); err != nil {
+		return err
+	}
+
+	keyFile, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	if err := pem.Encode(keyFile, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)}); err != nil {
+		keyFile.Close()
+		return err
+	}
+	return keyFile.Close()
 }
 
 func main() {
@@ -68,6 +168,7 @@ func main() {
 	// 5. Initialize attachment storage
 	attStorage := storage.NewAttachmentStorage(cfg.Storage.AttachDir)
 	applyDomainTLSConfig(stores, cfg)
+	ensureSelfSignedTLSConfig(cfg)
 
 	// 6. Start SMTP server
 	smtpSrv := smtp_server.NewSMTPServer(cfg.SMTP, stores, attStorage)
