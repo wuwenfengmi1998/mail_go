@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/smtp"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -225,11 +224,61 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 		sb.WriteString(body)
 	}
 
-	// Send via local SMTP
-	err := smtp.SendMail("localhost:25", nil, fromAddr, strings.Split(to, ","), []byte(sb.String()))
-	if err != nil {
-		// Log the error but still save to sent folder — SMTP may not be running yet
-		fmt.Printf("SMTP发送失败（邮件仍保存到发件箱）: %v\n", err)
+	allRecipients := append(parseAddressInput(to), parseAddressInput(cc)...)
+	localUsers := make([]*db.User, 0, len(allRecipients))
+	var unsupported []string
+	for _, rcpt := range allRecipients {
+		user, err := h.stores.Users.GetByEmail(rcpt)
+		if err != nil {
+			unsupported = append(unsupported, rcpt)
+			continue
+		}
+		localUsers = append(localUsers, user)
+	}
+	if len(unsupported) > 0 {
+		c.HTML(http.StatusBadRequest, "compose", gin.H{
+			"currentUser":  currentUser,
+			"activeFolder": "compose",
+			"error":        fmt.Sprintf("暂不支持外部投递: %s", strings.Join(unsupported, ", ")),
+			"to":           to,
+			"subject":      subject,
+			"cc":           cc,
+			"bodyContent":  htmlBody,
+			"usedBytes":    currentUser.UsedBytes,
+			"quotaBytes":   currentUser.QuotaBytes,
+		})
+		return
+	}
+
+	for _, rcptUser := range localUsers {
+		inboxMsg := &db.Message{
+			UserID:    rcptUser.ID,
+			MessageID: messageID,
+			Folder:    "INBOX",
+			FromAddr:  fromAddr,
+			ToAddr:    to,
+			CcAddr:    cc,
+			Subject:   subject,
+			TextBody:  body,
+			HtmlBody:  htmlBody,
+			RawData:   sb.String(),
+			Date:      now,
+			IsRead:    false,
+		}
+		if createErr := h.stores.Mails.Create(inboxMsg); createErr != nil {
+			c.HTML(http.StatusInternalServerError, "compose", gin.H{
+				"currentUser":  currentUser,
+				"activeFolder": "compose",
+				"error":        fmt.Sprintf("投递邮件失败: %v", createErr),
+				"to":           to,
+				"subject":      subject,
+				"cc":           cc,
+				"bodyContent":  htmlBody,
+				"usedBytes":    currentUser.UsedBytes,
+				"quotaBytes":   currentUser.QuotaBytes,
+			})
+			return
+		}
 	}
 
 	// Save to Sent folder
@@ -243,6 +292,7 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 		Subject:   subject,
 		TextBody:  body,
 		HtmlBody:  htmlBody,
+		RawData:   sb.String(),
 		Date:      now,
 		IsRead:    true,
 	}
@@ -304,6 +354,20 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 	}
 
 	c.Redirect(http.StatusFound, "/sent")
+}
+
+func parseAddressInput(input string) []string {
+	parts := strings.FieldsFunc(input, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r' || r == '\t' || r == ' '
+	})
+	addresses := make([]string, 0, len(parts))
+	for _, part := range parts {
+		addr := strings.TrimSpace(part)
+		if addr != "" {
+			addresses = append(addresses, addr)
+		}
+	}
+	return addresses
 }
 
 // mimeTypes maps common file extensions to MIME types.

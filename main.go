@@ -177,11 +177,16 @@ func main() {
 			log.Printf("SMTP 服务启动失败: %v", err)
 		}
 	}()
-	// Start SMTPS if TLS is configured
+	// Start SMTPS and submission if TLS is configured
 	if cfg.SMTP.TLSCert != "" && cfg.SMTP.TLSKey != "" {
 		go func() {
 			if err := smtpSrv.StartTLS(); err != nil {
 				log.Printf("SMTPS 服务启动失败: %v", err)
+			}
+		}()
+		go func() {
+			if err := smtpSrv.StartSubmission(); err != nil {
+				log.Printf("SMTP Submission 服务启动失败: %v", err)
 			}
 		}()
 	}

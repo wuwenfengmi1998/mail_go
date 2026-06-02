@@ -2,8 +2,8 @@ package config
 
 // Linux path prefixes
 const (
-	LinuxEtcDir   = "/etc/mail_go/"
-	LinuxBaseDir  = "/srv/mail_go/"
+	LinuxEtcDir  = "/etc/mail_go/"
+	LinuxBaseDir = "/srv/mail_go/"
 )
 
 // Windows path prefixes
@@ -16,6 +16,7 @@ const (
 const (
 	DefaultSMTPPort       = 25
 	DefaultSMTPTLSPort    = 465
+	DefaultSMTPSubmitPort = 587
 	DefaultIMAPPort       = 143
 	DefaultIMAPTLSPort    = 993
 	DefaultPOP3Port       = 110

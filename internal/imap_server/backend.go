@@ -1,6 +1,7 @@
 package imap_server
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -15,7 +16,9 @@ import (
 
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/backend"
+	"github.com/emersion/go-imap/backend/backendutil"
 	asgomail "github.com/emersion/go-message/mail"
+	"github.com/emersion/go-message/textproto"
 )
 
 // ---------- imapBackend ----------
@@ -67,7 +70,7 @@ func (u *imapUser) ListMailboxes(subscribed bool) ([]backend.Mailbox, error) {
 		attributes []string
 	}{
 		{"INBOX", "/", nil},
-		{"Sent", "/", nil},
+		{"Sent", "/", []string{"\\Sent"}},
 		{"Drafts", "/", []string{"\\Drafts"}},
 		{"Trash", "/", []string{"\\Trash"}},
 	}
@@ -87,25 +90,8 @@ func (u *imapUser) ListMailboxes(subscribed bool) ([]backend.Mailbox, error) {
 
 // GetMailbox returns a mailbox by name.
 func (u *imapUser) GetMailbox(name string) (backend.Mailbox, error) {
-	validNames := map[string]bool{
-		"INBOX":  true,
-		"Sent":   true,
-		"Drafts": true,
-		"Trash":  true,
-	}
-
-	normalized := name
-	upper := strings.ToUpper(name)
-	if upper == "INBOX" {
-		normalized = "INBOX"
-	} else if validNames[upper] {
-		normalized = upper
-	} else {
-		// Try title case
-		normalized = strings.Title(strings.ToLower(name))
-	}
-
-	if !validNames[normalized] {
+	normalized, ok := canonicalMailboxName(name)
+	if !ok {
 		return nil, backend.ErrNoSuchMailbox
 	}
 
@@ -115,6 +101,21 @@ func (u *imapUser) GetMailbox(name string) (backend.Mailbox, error) {
 		name:      normalized,
 		delimiter: "/",
 	}, nil
+}
+
+func canonicalMailboxName(name string) (string, bool) {
+	switch strings.ToUpper(strings.TrimSpace(name)) {
+	case "INBOX":
+		return "INBOX", true
+	case "SENT":
+		return "Sent", true
+	case "DRAFTS":
+		return "Drafts", true
+	case "TRASH":
+		return "Trash", true
+	default:
+		return "", false
+	}
 }
 
 // CreateMailbox creates a new mailbox (not supported in this version).
@@ -170,11 +171,9 @@ func (m *imapMailbox) Info() (*imap.MailboxInfo, error) {
 
 // Status returns mailbox status information.
 func (m *imapMailbox) Status(items []imap.StatusItem) (*imap.MailboxStatus, error) {
-	status := &imap.MailboxStatus{
-		Name:           m.name,
-		Flags:          []string{"\\Answered", "\\Flagged", "\\Deleted", "\\Seen", "\\Draft"},
-		PermanentFlags: []string{"\\Answered", "\\Flagged", "\\Deleted", "\\Seen", "\\Draft", "\\*"},
-	}
+	status := imap.NewMailboxStatus(m.name, items)
+	status.Flags = []string{"\\Answered", "\\Flagged", "\\Deleted", "\\Seen", "\\Draft"}
+	status.PermanentFlags = []string{"\\Answered", "\\Flagged", "\\Deleted", "\\Seen", "\\Draft", "\\*"}
 
 	messages, err := m.stores.Mails.ListAllByUserAndFolder(m.user.id, m.name)
 	if err != nil {
@@ -191,7 +190,11 @@ func (m *imapMailbox) Status(items []imap.StatusItem) (*imap.MailboxStatus, erro
 	}
 	status.Unseen = unseenCount
 	status.Recent = 0
-	status.UidNext = uint32(len(messages) + 1)
+	maxID, err := m.stores.Mails.MaxIDByUserAndFolder(m.user.id, m.name)
+	if err != nil {
+		return nil, err
+	}
+	status.UidNext = uint32(maxID + 1)
 	status.UidValidity = 1
 
 	return status, nil
@@ -258,85 +261,59 @@ func (m *imapMailbox) ListMessages(uid bool, seqset *imap.SeqSet, items []imap.F
 
 // buildIMAPMessage constructs an imap.Message from a db.Message with the requested items.
 func (m *imapMailbox) buildIMAPMessage(dbMsg *db.Message, seqNum uint32, items []imap.FetchItem) (*imap.Message, error) {
-	imapMsg := &imap.Message{
-		SeqNum:       seqNum,
-		Uid:          uint32(dbMsg.ID),
-		Flags:        m.getMessageFlags(dbMsg),
-		InternalDate: dbMsg.Date,
-		Body:         make(map[*imap.BodySectionName]imap.Literal),
-	}
+	imapMsg := imap.NewMessage(seqNum, items)
+	imapMsg.Uid = uint32(dbMsg.ID)
+	imapMsg.Flags = m.getMessageFlags(dbMsg)
+	imapMsg.InternalDate = dbMsg.Date
 
-	rawMsg := buildRawMessage(dbMsg)
+	rawMsg := messageRawData(dbMsg)
 	imapMsg.Size = uint32(len(rawMsg))
 
 	for _, item := range items {
 		switch item {
-		case imap.FetchUid:
-			// UID is already set on the struct
-		case imap.FetchFlags:
-			// Flags are already set on the struct
-		case imap.FetchInternalDate:
-			// InternalDate is already set on the struct
-		case imap.FetchRFC822Size:
-			// Size is already set on the struct
+		case imap.FetchUid, imap.FetchFlags, imap.FetchInternalDate, imap.FetchRFC822Size:
+			continue
 		case imap.FetchEnvelope:
-			imapMsg.Envelope = m.buildEnvelope(dbMsg)
-		case imap.FetchRFC822:
-			section := &imap.BodySectionName{BodyPartName: imap.BodyPartName{}}
-			imapMsg.Body[section] = bytes.NewReader(rawMsg)
-		case imap.FetchRFC822Header:
-			headerBytes := buildRawHeader(dbMsg)
-			section := &imap.BodySectionName{
-				BodyPartName: imap.BodyPartName{
-					Specifier: imap.HeaderSpecifier,
-				},
+			hdr, _, err := headerAndBody(rawMsg)
+			if err == nil {
+				imapMsg.Envelope, _ = backendutil.FetchEnvelope(hdr)
 			}
-			imapMsg.Body[section] = bytes.NewReader(headerBytes)
-		case imap.FetchRFC822Text:
-			var bodyText string
-			if dbMsg.TextBody != "" {
-				bodyText = dbMsg.TextBody
-			} else if dbMsg.HtmlBody != "" {
-				bodyText = dbMsg.HtmlBody
+			if imapMsg.Envelope == nil {
+				imapMsg.Envelope = m.buildEnvelope(dbMsg)
 			}
-			section := &imap.BodySectionName{
-				BodyPartName: imap.BodyPartName{
-					Specifier: imap.TextSpecifier,
-				},
+		case imap.FetchBody, imap.FetchBodyStructure:
+			hdr, body, err := headerAndBody(rawMsg)
+			if err == nil {
+				imapMsg.BodyStructure, _ = backendutil.FetchBodyStructure(hdr, body, item == imap.FetchBodyStructure)
 			}
-			imapMsg.Body[section] = bytes.NewReader([]byte(bodyText))
 		default:
-			// Handle BODY[] and BODY.PEEK[] sections
-			itemStr := string(item)
-			if strings.HasPrefix(itemStr, "BODY[]") || strings.HasPrefix(itemStr, "BODY.PEEK[]") {
-				section := &imap.BodySectionName{BodyPartName: imap.BodyPartName{}}
-				imapMsg.Body[section] = bytes.NewReader(rawMsg)
-			} else if strings.HasPrefix(itemStr, "BODY[HEADER") || strings.HasPrefix(itemStr, "BODY.PEEK[HEADER") {
-				headerBytes := buildRawHeader(dbMsg)
-				section := &imap.BodySectionName{
-					BodyPartName: imap.BodyPartName{
-						Specifier: imap.HeaderSpecifier,
-					},
-				}
-				imapMsg.Body[section] = bytes.NewReader(headerBytes)
-			} else if strings.HasPrefix(itemStr, "BODY[TEXT") || strings.HasPrefix(itemStr, "BODY.PEEK[TEXT") {
-				var bodyText string
-				if dbMsg.TextBody != "" {
-					bodyText = dbMsg.TextBody
-				} else if dbMsg.HtmlBody != "" {
-					bodyText = dbMsg.HtmlBody
-				}
-				section := &imap.BodySectionName{
-					BodyPartName: imap.BodyPartName{
-						Specifier: imap.TextSpecifier,
-					},
-				}
-				imapMsg.Body[section] = bytes.NewReader([]byte(bodyText))
+			section, err := imap.ParseBodySectionName(item)
+			if err != nil {
+				continue
 			}
+			hdr, body, err := headerAndBody(rawMsg)
+			if err != nil {
+				return nil, err
+			}
+			literal, _ := backendutil.FetchBodySection(hdr, body, section)
+			imapMsg.Body[section] = literal
 		}
 	}
 
 	return imapMsg, nil
+}
+
+func messageRawData(msg *db.Message) []byte {
+	if msg.RawData != "" {
+		return []byte(msg.RawData)
+	}
+	return buildRawMessage(msg)
+}
+
+func headerAndBody(raw []byte) (textproto.Header, io.Reader, error) {
+	body := bufio.NewReader(bytes.NewReader(raw))
+	hdr, err := textproto.ReadHeader(body)
+	return hdr, body, err
 }
 
 // getMessageFlags returns IMAP flags for a database message.
@@ -607,26 +584,38 @@ func (m *imapMailbox) UpdateMessagesFlags(uid bool, seqset *imap.SeqSet, op imap
 			continue
 		}
 
+		flagSet := make(map[string]bool, len(flags))
 		for _, flag := range flags {
+			flagSet[flag] = true
+		}
+
+		applyFlag := func(flag string, enabled bool) {
 			switch flag {
 			case "\\Seen":
-				if op == imap.AddFlags || op == imap.SetFlags {
-					_ = m.stores.Mails.MarkRead(dbMsg.ID)
-				} else if op == imap.RemoveFlags {
-					// Mark as unread — update directly
-				}
+				_ = m.stores.Mails.MarkReadState(dbMsg.ID, enabled)
 			case "\\Flagged":
-				if op == imap.AddFlags || op == imap.SetFlags {
-					_ = m.stores.Mails.MarkFlagged(dbMsg.ID, true)
-				} else if op == imap.RemoveFlags {
-					_ = m.stores.Mails.MarkFlagged(dbMsg.ID, false)
-				}
+				_ = m.stores.Mails.MarkFlagged(dbMsg.ID, enabled)
 			case "\\Deleted":
-				if op == imap.AddFlags || op == imap.SetFlags {
+				if enabled {
 					m.deleted[dbMsg.ID] = true
-				} else if op == imap.RemoveFlags {
+				} else {
 					delete(m.deleted, dbMsg.ID)
 				}
+			}
+		}
+
+		switch op {
+		case imap.SetFlags:
+			applyFlag("\\Seen", flagSet["\\Seen"])
+			applyFlag("\\Flagged", flagSet["\\Flagged"])
+			applyFlag("\\Deleted", flagSet["\\Deleted"])
+		case imap.AddFlags:
+			for flag := range flagSet {
+				applyFlag(flag, true)
+			}
+		case imap.RemoveFlags:
+			for flag := range flagSet {
+				applyFlag(flag, false)
 			}
 		}
 	}
@@ -636,6 +625,11 @@ func (m *imapMailbox) UpdateMessagesFlags(uid bool, seqset *imap.SeqSet, op imap
 
 // CopyMessages copies messages to another mailbox.
 func (m *imapMailbox) CopyMessages(uid bool, seqset *imap.SeqSet, dest string) error {
+	dest, ok := canonicalMailboxName(dest)
+	if !ok {
+		return backend.ErrNoSuchMailbox
+	}
+
 	dbMessages, err := m.stores.Mails.ListAllByUserAndFolder(m.user.id, m.name)
 	if err != nil {
 		return err
@@ -663,6 +657,7 @@ func (m *imapMailbox) CopyMessages(uid bool, seqset *imap.SeqSet, dest string) e
 			Subject:   dbMsg.Subject,
 			TextBody:  dbMsg.TextBody,
 			HtmlBody:  dbMsg.HtmlBody,
+			RawData:   dbMsg.RawData,
 			IsRead:    dbMsg.IsRead,
 			IsFlagged: dbMsg.IsFlagged,
 			Date:      dbMsg.Date,
@@ -672,6 +667,35 @@ func (m *imapMailbox) CopyMessages(uid bool, seqset *imap.SeqSet, dest string) e
 		}
 	}
 
+	return nil
+}
+
+// MoveMessages moves messages to another mailbox.
+func (m *imapMailbox) MoveMessages(uid bool, seqset *imap.SeqSet, dest string) error {
+	dest, ok := canonicalMailboxName(dest)
+	if !ok {
+		return backend.ErrNoSuchMailbox
+	}
+
+	dbMessages, err := m.stores.Mails.ListAllByUserAndFolder(m.user.id, m.name)
+	if err != nil {
+		return err
+	}
+
+	for i, dbMsg := range dbMessages {
+		var match bool
+		if uid {
+			match = seqset.Contains(uint32(dbMsg.ID))
+		} else {
+			match = seqset.Contains(uint32(i + 1))
+		}
+		if !match {
+			continue
+		}
+		if err := m.stores.Mails.MoveToFolder(dbMsg.ID, dest); err != nil {
+			log.Printf("IMAP: failed to move message %d to %s: %v", dbMsg.ID, dest, err)
+		}
+	}
 	return nil
 }
 

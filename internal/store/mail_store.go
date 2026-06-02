@@ -24,7 +24,9 @@ type MailStore interface {
 	ListByUserAndFolder(userID uint, folder string, page, size int) ([]db.Message, int64, error)
 	ListAllByUserAndFolder(userID uint, folder string) ([]db.Message, error)
 	CountByUserAndFolder(userID uint, folder string) (int64, error)
+	MaxIDByUserAndFolder(userID uint, folder string) (uint, error)
 	MarkRead(id uint) error
+	MarkReadState(id uint, read bool) error
 	MarkFlagged(id uint, flagged bool) error
 	MoveToFolder(id uint, folder string) error
 	Delete(id uint) error
@@ -81,7 +83,12 @@ func (s *mailStoreGorm) ListByUserAndFolder(userID uint, folder string, page, si
 
 // MarkRead sets the IsRead flag to true for a message.
 func (s *mailStoreGorm) MarkRead(id uint) error {
-	return s.db.Model(&db.Message{}).Where("id = ?", id).Update("is_read", true).Error
+	return s.MarkReadState(id, true)
+}
+
+// MarkReadState sets the IsRead flag for a message.
+func (s *mailStoreGorm) MarkReadState(id uint, read bool) error {
+	return s.db.Model(&db.Message{}).Where("id = ?", id).Update("is_read", read).Error
 }
 
 // MarkFlagged sets the IsFlagged flag for a message.
@@ -130,6 +137,18 @@ func (s *mailStoreGorm) CountByUserAndFolder(userID uint, folder string) (int64,
 		return 0, err
 	}
 	return count, nil
+}
+
+// MaxIDByUserAndFolder returns the highest message ID for a user folder.
+func (s *mailStoreGorm) MaxIDByUserAndFolder(userID uint, folder string) (uint, error) {
+	var maxID uint
+	if err := s.db.Model(&db.Message{}).
+		Where("user_id = ? AND folder = ?", userID, folder).
+		Select("COALESCE(MAX(id), 0)").
+		Scan(&maxID).Error; err != nil {
+		return 0, err
+	}
+	return maxID, nil
 }
 
 // CountByFolder returns the total count of messages in a given folder.

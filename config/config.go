@@ -17,8 +17,8 @@ type DatabaseConfig struct {
 
 // StorageConfig holds file storage paths.
 type StorageConfig struct {
-	BaseDir    string `toml:"base_dir"`
-	AttachDir  string `toml:"attach_dir"`
+	BaseDir   string `toml:"base_dir"`
+	AttachDir string `toml:"attach_dir"`
 }
 
 // WebConfig holds web server settings.
@@ -28,12 +28,13 @@ type WebConfig struct {
 
 // SMTPConfig holds SMTP server settings.
 type SMTPConfig struct {
-	Addr       string `toml:"addr"`
-	TLSAddr    string `toml:"tls_addr"`
-	Domain     string `toml:"domain"`
-	TLSCert    string `toml:"tls_cert"`
-	TLSKey     string `toml:"tls_key"`
-	MaxMessage int64 `toml:"max_message_bytes"`
+	Addr           string `toml:"addr"`
+	TLSAddr        string `toml:"tls_addr"`
+	SubmissionAddr string `toml:"submission_addr"`
+	Domain         string `toml:"domain"`
+	TLSCert        string `toml:"tls_cert"`
+	TLSKey         string `toml:"tls_key"`
+	MaxMessage     int64  `toml:"max_message_bytes"`
 }
 
 // IMAPConfig holds IMAP server settings.
@@ -56,15 +57,15 @@ type POP3Config struct {
 type AuthConfig struct {
 	// OAuth2 configuration
 	OAuth2Enabled      bool   `toml:"oauth2_enabled"`
-	OAuth2Provider     string `toml:"oauth2_provider"`      // google, github, gitlab
+	OAuth2Provider     string `toml:"oauth2_provider"` // google, github, gitlab
 	OAuth2ClientID     string `toml:"oauth2_client_id"`
 	OAuth2ClientSecret string `toml:"oauth2_client_secret"`
 	OAuth2RedirectURL  string `toml:"oauth2_redirect_url"`
 
 	// LDAP configuration
-	LDAPEnabled     bool   `toml:"ldap_enabled"`
-	LDAPServer      string `toml:"ldap_server"`        // e.g. ldap://localhost:389
-	LDAPBindDN      string `toml:"ldap_bind_dn"`       // e.g. cn=admin,dc=example,dc=com
+	LDAPEnabled      bool   `toml:"ldap_enabled"`
+	LDAPServer       string `toml:"ldap_server"`  // e.g. ldap://localhost:389
+	LDAPBindDN       string `toml:"ldap_bind_dn"` // e.g. cn=admin,dc=example,dc=com
 	LDAPBindPassword string `toml:"ldap_bind_password"`
 	LDAPSearchBase   string `toml:"ldap_search_base"`   // e.g. ou=users,dc=example,dc=com
 	LDAPSearchFilter string `toml:"ldap_search_filter"` // e.g. (uid=%s)
@@ -134,10 +135,11 @@ func defaultConfig() *Config {
 			Addr: DefaultWebPort,
 		},
 		SMTP: SMTPConfig{
-			Addr:       fmt.Sprintf(":%d", DefaultSMTPPort),
-			TLSAddr:    fmt.Sprintf(":%d", DefaultSMTPTLSPort),
-			Domain:     "localhost",
-			MaxMessage: 64 * 1024 * 1024, // 64MB
+			Addr:           fmt.Sprintf(":%d", DefaultSMTPPort),
+			TLSAddr:        fmt.Sprintf(":%d", DefaultSMTPTLSPort),
+			SubmissionAddr: fmt.Sprintf(":%d", DefaultSMTPSubmitPort),
+			Domain:         "localhost",
+			MaxMessage:     64 * 1024 * 1024, // 64MB
 		},
 		IMAP: IMAPConfig{
 			Addr:    fmt.Sprintf(":%d", DefaultIMAPPort),
@@ -185,6 +187,9 @@ func mergeDefaults(cfg *Config, defaults *Config) *Config {
 	}
 	if cfg.SMTP.TLSAddr == "" {
 		cfg.SMTP.TLSAddr = defaults.SMTP.TLSAddr
+	}
+	if cfg.SMTP.SubmissionAddr == "" {
+		cfg.SMTP.SubmissionAddr = defaults.SMTP.SubmissionAddr
 	}
 	if cfg.SMTP.Domain == "" {
 		cfg.SMTP.Domain = defaults.SMTP.Domain
