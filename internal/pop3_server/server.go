@@ -2,6 +2,7 @@ package pop3_server
 
 import (
 	"bufio"
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net"
@@ -66,7 +67,36 @@ func (s *POP3Server) StartTLS() error {
 	if s.cfg.TLSCert == "" || s.cfg.TLSKey == "" {
 		return fmt.Errorf("POP3 TLS certificate or key not configured")
 	}
-	return fmt.Errorf("POP3 TLS not yet implemented")
+
+	cert, err := tls.LoadX509KeyPair(s.cfg.TLSCert, s.cfg.TLSKey)
+	if err != nil {
+		return fmt.Errorf("load POP3 TLS certificate failed: %w", err)
+	}
+
+	listener, err := tls.Listen("tcp", s.cfg.TLSAddr, &tls.Config{Certificates: []tls.Certificate{cert}})
+	if err != nil {
+		return fmt.Errorf("POP3 TLS listen failed: %w", err)
+	}
+
+	log.Printf("POP3 TLS server listening on %s", s.cfg.TLSAddr)
+
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			s.wg.Add(1)
+			go func() {
+				defer s.wg.Done()
+				s.handleConn(conn)
+			}()
+		}
+	}()
+
+	return nil
 }
 
 // handleConn handles a single POP3 client connection.

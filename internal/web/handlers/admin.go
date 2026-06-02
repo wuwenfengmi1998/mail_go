@@ -1,10 +1,14 @@
 package handlers
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"mail_go/internal/db"
@@ -20,11 +24,12 @@ import (
 type AdminHandler struct {
 	stores  *store.Stores
 	storage *storage.AttachmentStorage
+	tlsDir  string
 }
 
 // NewAdminHandler creates a new AdminHandler with the given stores and attachment storage.
-func NewAdminHandler(stores *store.Stores, attStorage *storage.AttachmentStorage) *AdminHandler {
-	return &AdminHandler{stores: stores, storage: attStorage}
+func NewAdminHandler(stores *store.Stores, attStorage *storage.AttachmentStorage, tlsDir string) *AdminHandler {
+	return &AdminHandler{stores: stores, storage: attStorage, tlsDir: tlsDir}
 }
 
 // Dashboard renders the admin dashboard with summary statistics.
@@ -64,17 +69,17 @@ func (h *AdminHandler) Dashboard(c *gin.Context) {
 	currentUser, _ := c.Get("currentUser")
 
 	c.HTML(200, "admin_dashboard", gin.H{
-		"currentUser":    currentUser,
+		"currentUser":   currentUser,
 		"domainCount":   domainCount,
 		"userCount":     userCount,
-		"totalMails":   totalMails,
+		"totalMails":    totalMails,
 		"inboxCount":    inboxCount,
 		"sentCount":     sentCount,
-		"draftsCount":  draftsCount,
-		"trashCount":   trashCount,
+		"draftsCount":   draftsCount,
+		"trashCount":    trashCount,
 		"totalSize":     totalSize,
-		"inboxSize":    inboxSize,
-		"sentSize":     sentSize,
+		"inboxSize":     inboxSize,
+		"sentSize":      sentSize,
 		"todayReceived": todayReceived,
 		"todaySent":     todaySent,
 		"weekReceived":  weekReceived,
@@ -202,11 +207,13 @@ func (h *AdminHandler) EditDomain(c *gin.Context) {
 
 	currentUser, _ := c.Get("currentUser")
 	c.HTML(200, "admin_domain_form", gin.H{
-		"currentUser":  currentUser,
-		"activeFolder": "domains",
-		"error":        "",
-		"isEdit":       true,
-		"domain":       domain,
+		"currentUser":       currentUser,
+		"activeFolder":      "domains",
+		"error":             "",
+		"isEdit":            true,
+		"domain":            domain,
+		"tlsPublicCert":     readTLSCert(domain.TlsCertPath),
+		"tlsCertConfigured": domain.TlsCertPath != "" && domain.TlsKeyPath != "",
 	})
 }
 
@@ -229,6 +236,13 @@ func (h *AdminHandler) UpdateDomain(c *gin.Context) {
 	domain.Pop3Port = formIntOrDefault(c, "pop3_port", domain.Pop3Port)
 	domain.TlsEnabled = c.PostForm("tls_enabled") == "on"
 
+	tlsPrivateKey := strings.TrimSpace(c.PostForm("tls_private_key"))
+	tlsPublicCert := strings.TrimSpace(c.PostForm("tls_public_cert"))
+	if err := h.handleDomainTLSUpdate(domain, tlsPublicCert, tlsPrivateKey); err != nil {
+		h.renderDomainFormError(c, domain, err.Error(), tlsPublicCert)
+		return
+	}
+
 	// 重新生成DKIM
 	if c.PostForm("regenerate_dkim") == "on" {
 		privKey, pubKey, err := dkim.GenerateKeyPair()
@@ -240,18 +254,82 @@ func (h *AdminHandler) UpdateDomain(c *gin.Context) {
 	}
 
 	if err := h.stores.Domains.Update(domain); err != nil {
-		currentUser, _ := c.Get("currentUser")
-		c.HTML(http.StatusBadRequest, "admin_domain_form", gin.H{
-			"currentUser":  currentUser,
-			"activeFolder": "domains",
-			"error":        fmt.Sprintf("更新域名失败: %v", err),
-			"isEdit":       true,
-			"domain":       domain,
-		})
+		h.renderDomainFormError(c, domain, fmt.Sprintf("更新域名失败: %v", err), tlsPublicCert)
 		return
 	}
 
 	c.Redirect(http.StatusFound, "/admin/domains")
+}
+
+func readTLSCert(path string) string {
+	if path == "" {
+		return ""
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func (h *AdminHandler) handleDomainTLSUpdate(domain *db.Domain, publicCert, privateKey string) error {
+	if !domain.TlsEnabled {
+		return nil
+	}
+
+	hasExistingCert := domain.TlsCertPath != "" && domain.TlsKeyPath != ""
+	if publicCert == "" && privateKey == "" {
+		if hasExistingCert {
+			return nil
+		}
+		return fmt.Errorf("启用 TLS 时必须填写 TLS 私钥和公钥证书")
+	}
+	if hasExistingCert && privateKey == "" && strings.TrimSpace(readTLSCert(domain.TlsCertPath)) == publicCert {
+		return nil
+	}
+	if publicCert == "" || privateKey == "" {
+		return fmt.Errorf("TLS 私钥和公钥证书必须同时填写")
+	}
+
+	if _, err := tls.X509KeyPair([]byte(publicCert), []byte(privateKey)); err != nil {
+		return fmt.Errorf("TLS 证书或私钥无效: %v", err)
+	}
+
+	domainTLSDir := filepath.Join(h.tlsDir, strconv.FormatUint(uint64(domain.ID), 10))
+	if err := os.MkdirAll(domainTLSDir, 0700); err != nil {
+		return fmt.Errorf("创建 TLS 证书目录失败: %v", err)
+	}
+
+	certPath := filepath.Join(domainTLSDir, "cert.pem")
+	keyPath := filepath.Join(domainTLSDir, "key.pem")
+	if err := os.WriteFile(certPath, []byte(publicCert+"\n"), 0644); err != nil {
+		return fmt.Errorf("保存 TLS 公钥证书失败: %v", err)
+	}
+	if err := os.WriteFile(keyPath, []byte(privateKey+"\n"), 0600); err != nil {
+		return fmt.Errorf("保存 TLS 私钥失败: %v", err)
+	}
+
+	domain.TlsCertPath = certPath
+	domain.TlsKeyPath = keyPath
+	return nil
+}
+
+func (h *AdminHandler) renderDomainFormError(c *gin.Context, domain *db.Domain, message, tlsPublicCert string) {
+	currentUser, _ := c.Get("currentUser")
+	if tlsPublicCert == "" {
+		tlsPublicCert = readTLSCert(domain.TlsCertPath)
+	}
+
+	c.HTML(http.StatusBadRequest, "admin_domain_form", gin.H{
+		"currentUser":       currentUser,
+		"activeFolder":      "domains",
+		"error":             message,
+		"isEdit":            true,
+		"domain":            domain,
+		"tlsPublicCert":     tlsPublicCert,
+		"tlsCertConfigured": domain.TlsCertPath != "" && domain.TlsKeyPath != "",
+	})
 }
 
 // DeleteDomain removes a domain by ID.

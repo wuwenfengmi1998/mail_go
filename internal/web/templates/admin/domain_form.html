@@ -51,13 +51,36 @@
                             </label>
                             <p style="color:#7f8c8d;font-size:12px;margin-top:4px;">勾选后端口将自动切换为 SSL/TLS 标准端口</p>
                         </div>
+                        {{if .isEdit}}
+                        <div id="tls_cert_fields" style="display:none;">
+                            <div class="form-group">
+                                <label>TLS 私钥 PEM</label>
+                                <textarea name="tls_private_key" rows="8" placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----" style="font-family:monospace;"></textarea>
+                                <p style="color:#7f8c8d;font-size:12px;margin-top:4px;">私钥不会回显；留空则保留现有私钥。</p>
+                            </div>
+                            <div class="form-group">
+                                <label>TLS 公钥证书 PEM</label>
+                                <textarea name="tls_public_cert" rows="8" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----" style="font-family:monospace;">{{.tlsPublicCert}}</textarea>
+                                {{if .tlsCertConfigured}}
+                                <p style="color:#27ae60;font-size:12px;margin-top:4px;">✅ TLS 证书已配置；上传新证书后需重启服务生效。</p>
+                                {{else}}
+                                <p style="color:#e67e22;font-size:12px;margin-top:4px;">⚠️ TLS 证书未配置，启用 TLS 时必须同时填写私钥和证书。</p>
+                                {{end}}
+                            </div>
+                        </div>
+                        {{end}}
                         <script>
                         function togglePorts() {
                             var tls = document.getElementById('tls_enabled').checked;
                             document.querySelector('input[name="smtp_port"]').value = tls ? 465 : 25;
                             document.querySelector('input[name="imap_port"]').value = tls ? 993 : 143;
                             document.querySelector('input[name="pop3_port"]').value = tls ? 995 : 110;
+                            var certFields = document.getElementById('tls_cert_fields');
+                            if (certFields) {
+                                certFields.style.display = tls ? 'block' : 'none';
+                            }
                         }
+                        document.addEventListener('DOMContentLoaded', togglePorts);
                         </script>
                         {{if .isEdit}}
                         <div class="form-group">

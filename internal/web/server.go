@@ -6,6 +6,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"mail_go/config"
@@ -35,22 +36,23 @@ func formatBytes(b int64) string {
 
 // WebServer wraps the Gin engine and its dependencies.
 type WebServer struct {
-	engine  *gin.Engine
-	stores  *store.Stores
-	storage *storage.AttachmentStorage
-	cfg     config.WebConfig
-	authCfg config.AuthConfig
-	banCfg  config.BanConfig
+	engine     *gin.Engine
+	stores     *store.Stores
+	storage    *storage.AttachmentStorage
+	cfg        config.WebConfig
+	storageCfg config.StorageConfig
+	authCfg    config.AuthConfig
+	banCfg     config.BanConfig
 }
 
 // templateFuncs returns custom template functions for rendering.
 func templateFuncs() template.FuncMap {
 	return template.FuncMap{
-		"add": func(a, b int) int { return a + b },
-		"sub": func(a, b int) int { return a - b },
-		"mul": func(a, b int) int { return a * b },
-		"div": func(a, b int) int { return a / b },
-		"mod": func(a, b int) int { return a % b },
+		"add":     func(a, b int) int { return a + b },
+		"sub":     func(a, b int) int { return a - b },
+		"mul":     func(a, b int) int { return a * b },
+		"div":     func(a, b int) int { return a / b },
+		"mod":     func(a, b int) int { return a % b },
 		"ceilDiv": func(a, b int) int { return int(math.Ceil(float64(a) / float64(b))) },
 		"seq": func(n int) []int {
 			result := make([]int, n)
@@ -76,7 +78,7 @@ func templateFuncs() template.FuncMap {
 
 // NewWebServer creates a new WebServer, initializes the Gin engine,
 // configures sessions, middleware, and registers all routes.
-func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, authCfg config.AuthConfig, banCfg config.BanConfig) *WebServer {
+func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, storageCfg config.StorageConfig, authCfg config.AuthConfig, banCfg config.BanConfig) *WebServer {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	engine.Use(gin.Logger())
@@ -99,12 +101,13 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 	engine.SetHTMLTemplate(tmpl)
 
 	ws := &WebServer{
-		engine:  engine,
-		stores:  stores,
-		storage: attStorage,
-		cfg:     cfg,
-		authCfg: authCfg,
-		banCfg:  banCfg,
+		engine:     engine,
+		stores:     stores,
+		storage:    attStorage,
+		cfg:        cfg,
+		storageCfg: storageCfg,
+		authCfg:    authCfg,
+		banCfg:     banCfg,
 	}
 
 	ws.registerRoutes()
@@ -115,7 +118,7 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 func (ws *WebServer) registerRoutes() {
 	authHandler := handlers.NewAuthHandler(ws.stores, ws.authCfg, ws.banCfg)
 	mailHandler := handlers.NewMailHandler(ws.stores, ws.storage)
-	adminHandler := handlers.NewAdminHandler(ws.stores, ws.storage)
+	adminHandler := handlers.NewAdminHandler(ws.stores, ws.storage, filepath.Join(ws.storageCfg.BaseDir, "tls", "domains"))
 
 	// Apply BanMiddleware globally before public routes
 	ws.engine.Use(middleware.BanMiddleware(ws.stores))

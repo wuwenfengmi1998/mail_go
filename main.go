@@ -16,6 +16,34 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+func applyDomainTLSConfig(stores *store.Stores, cfg *config.Config) {
+	domain, err := stores.Domains.GetFirstTLSEnabledWithCert()
+	if err != nil {
+		return
+	}
+
+	applied := false
+	if cfg.SMTP.TLSCert == "" && cfg.SMTP.TLSKey == "" {
+		cfg.SMTP.TLSCert = domain.TlsCertPath
+		cfg.SMTP.TLSKey = domain.TlsKeyPath
+		applied = true
+	}
+	if cfg.IMAP.TLSCert == "" && cfg.IMAP.TLSKey == "" {
+		cfg.IMAP.TLSCert = domain.TlsCertPath
+		cfg.IMAP.TLSKey = domain.TlsKeyPath
+		applied = true
+	}
+	if cfg.POP3.TLSCert == "" && cfg.POP3.TLSKey == "" {
+		cfg.POP3.TLSCert = domain.TlsCertPath
+		cfg.POP3.TLSKey = domain.TlsKeyPath
+		applied = true
+	}
+
+	if applied {
+		log.Printf("使用域名 %s 的 TLS 证书；更新证书后需重启服务生效", domain.Name)
+	}
+}
+
 func main() {
 	// 1. Load configuration
 	cfg, err := config.LoadConfig()
@@ -39,6 +67,7 @@ func main() {
 
 	// 5. Initialize attachment storage
 	attStorage := storage.NewAttachmentStorage(cfg.Storage.AttachDir)
+	applyDomainTLSConfig(stores, cfg)
 
 	// 6. Start SMTP server
 	smtpSrv := smtp_server.NewSMTPServer(cfg.SMTP, stores, attStorage)
@@ -89,7 +118,7 @@ func main() {
 	}
 
 	// 9. Start Web server
-	webServer := web.NewWebServer(cfg.Web, stores, attStorage, cfg.Auth, cfg.Ban)
+	webServer := web.NewWebServer(cfg.Web, stores, attStorage, cfg.Storage, cfg.Auth, cfg.Ban)
 	fmt.Printf("Web 服务启动在 %s\n", cfg.Web.Addr)
 	go func() {
 		if err := webServer.Start(); err != nil {

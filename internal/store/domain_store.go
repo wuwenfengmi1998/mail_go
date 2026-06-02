@@ -11,6 +11,7 @@ type DomainStore interface {
 	Create(domain *db.Domain) error
 	GetByID(id uint) (*db.Domain, error)
 	GetByName(name string) (*db.Domain, error)
+	GetFirstTLSEnabledWithCert() (*db.Domain, error)
 	Update(domain *db.Domain) error
 	Delete(id uint) error
 	List(page, size int) ([]db.Domain, int64, error)
@@ -44,6 +45,15 @@ func (s *domainStoreGorm) GetByID(id uint) (*db.Domain, error) {
 func (s *domainStoreGorm) GetByName(name string) (*db.Domain, error) {
 	var domain db.Domain
 	if err := s.db.Where("name = ?", name).First(&domain).Error; err != nil {
+		return nil, err
+	}
+	return &domain, nil
+}
+
+// GetFirstTLSEnabledWithCert retrieves the first TLS-enabled domain with certificate paths.
+func (s *domainStoreGorm) GetFirstTLSEnabledWithCert() (*db.Domain, error) {
+	var domain db.Domain
+	if err := s.db.Where("tls_enabled = ? AND tls_cert_path <> ? AND tls_key_path <> ?", true, "", "").Order("id ASC").First(&domain).Error; err != nil {
 		return nil, err
 	}
 	return &domain, nil
