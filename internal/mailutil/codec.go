@@ -4,6 +4,8 @@ package mailutil
 
 import (
 	"fmt"
+	"io"
+	"mime"
 	"strings"
 	"unicode/utf8"
 
@@ -40,13 +42,31 @@ func DecodeCharset(buf []byte, charset string) string {
 	return string(decoded)
 }
 
+// DecodeRFC2047 解码邮件头中的 RFC 2047 encoded-word。
+func DecodeRFC2047(value string) string {
+	decoder := mime.WordDecoder{
+		CharsetReader: func(charset string, input io.Reader) (io.Reader, error) {
+			data, err := io.ReadAll(input)
+			if err != nil {
+				return nil, err
+			}
+			return strings.NewReader(DecodeCharset(data, charset)), nil
+		},
+	}
+	decoded, err := decoder.DecodeHeader(value)
+	if err != nil {
+		return value
+	}
+	return decoded
+}
+
 // FormatAddressList 解析 RFC 2047 编码的地址列表头并格式化为可读字符串。
 // 例如: "=?gb2312?B?zuIgzsS35Q==?= <a@b.com>" → "吴文锋 <a@b.com>"
 func FormatAddressList(header *asgomail.Header, key string) string {
 	addrs, err := header.AddressList(key)
 	if err != nil || len(addrs) == 0 {
-		// 降级：返回原始值
-		return header.Get(key)
+		// 降级：返回解码后的原始值
+		return DecodeRFC2047(header.Get(key))
 	}
 
 	var parts []string

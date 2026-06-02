@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"mail_go/config"
+	"mail_go/internal/mailutil"
 	"mail_go/internal/storage"
 	"mail_go/internal/store"
 	"mail_go/internal/web/handlers"
@@ -72,6 +73,9 @@ func templateFuncs() template.FuncMap {
 		},
 		"formatBytes": func(b int64) string {
 			return formatBytes(b)
+		},
+		"decodeHeader": func(s string) string {
+			return mailutil.DecodeRFC2047(s)
 		},
 	}
 }

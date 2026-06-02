@@ -35,7 +35,7 @@
                     </div>
                     <h2>{{if .message.Subject}}{{.message.Subject}}{{else}}(无主题){{end}}</h2>
                     <div class="mail-meta" style="margin-top:12px;">
-                        <p><strong>发件人:</strong> {{.message.FromAddr}}</p>
+                        <p><strong>发件人:</strong> {{decodeHeader .message.FromAddr}}</p>
                         <p><strong>收件人:</strong> {{.message.ToAddr}}</p>
                         {{if .message.CcAddr}}<p><strong>抄送:</strong> {{.message.CcAddr}}</p>{{end}}
                         <p><strong>所属用户:</strong> {{if .message.User.ID}}{{.message.User.Username}}{{else}}—{{end}}</p>

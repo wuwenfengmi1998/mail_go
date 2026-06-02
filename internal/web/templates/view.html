@@ -34,7 +34,7 @@
                     </div>
                     <h2>{{if .message.Subject}}{{.message.Subject}}{{else}}(无主题){{end}}</h2>
                     <div class="mail-meta" style="margin-top:12px;">
-                        <p><strong>发件人:</strong> {{.message.FromAddr}}</p>
+                        <p><strong>发件人:</strong> {{decodeHeader .message.FromAddr}}</p>
                         <p><strong>收件人:</strong> {{.message.ToAddr}}</p>
                         {{if .message.CcAddr}}<p><strong>抄送:</strong> {{.message.CcAddr}}</p>{{end}}
                         <p><strong>时间:</strong> {{.message.Date.Format "2006-01-02 15:04:05"}}</p>
@@ -62,7 +62,7 @@
                               onsubmit="return confirm('确定要删除这封邮件吗？');">
                             <button type="submit" class="btn btn-danger">删除邮件</button>
                         </form>
-                        <a href="/compose?to={{.message.FromAddr}}&subject={{if .message.Subject}}Re: {{.message.Subject}}{{end}}" class="btn btn-primary" style="margin-left:8px;">回复</a>
+                        <a href="/compose?to={{decodeHeader .message.FromAddr}}&subject={{if .message.Subject}}Re: {{.message.Subject}}{{end}}" class="btn btn-primary" style="margin-left:8px;">回复</a>
                     </div>
                 </div>
             </div>

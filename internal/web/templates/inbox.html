@@ -36,7 +36,7 @@
                         <tbody>
                         {{range .messages}}
                             <tr class="{{if not .IsRead}}unread{{end}}">
-                                <td>{{.FromAddr}}</td>
+                                <td>{{decodeHeader .FromAddr}}</td>
                                 <td>
                                     <a href="/inbox/{{.ID}}" class="message-subject">
                                         {{if .Subject}}{{.Subject}}{{else}}(无主题){{end}}

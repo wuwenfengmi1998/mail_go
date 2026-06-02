@@ -46,7 +46,7 @@
                         <tbody>
                         {{range .messages}}
                             <tr style="cursor:pointer;" onclick="location.href='/admin/mails/{{.ID}}'">
-                                <td>{{.FromAddr}}</td>
+                                <td>{{decodeHeader .FromAddr}}</td>
                                 <td>{{.ToAddr}}</td>
                                 <td>{{.Subject}}</td>
                                 <td>{{if .User.ID}}{{.User.Username}}{{else}}—{{end}}</td>
