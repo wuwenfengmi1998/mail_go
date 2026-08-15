@@ -12,6 +12,7 @@ import (
 	"mail_go/config"
 	"mail_go/internal/db"
 	"mail_go/internal/mailutil"
+	"mail_go/internal/outbound"
 	"mail_go/internal/storage"
 	"mail_go/internal/store"
 
@@ -30,14 +31,15 @@ const (
 
 // SMTPServer wraps go-smtp servers and provides local mail delivery.
 type SMTPServer struct {
-	stores  *store.Stores
-	storage *storage.AttachmentStorage
-	cfg     config.SMTPConfig
+	stores   *store.Stores
+	storage  *storage.AttachmentStorage
+	outbound *outbound.Manager
+	cfg      config.SMTPConfig
 }
 
 // NewSMTPServer creates a new SMTP server instance.
-func NewSMTPServer(cfg config.SMTPConfig, stores *store.Stores, attStorage *storage.AttachmentStorage) *SMTPServer {
-	return &SMTPServer{stores: stores, storage: attStorage, cfg: cfg}
+func NewSMTPServer(cfg config.SMTPConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, ob *outbound.Manager) *SMTPServer {
+	return &SMTPServer{stores: stores, storage: attStorage, outbound: ob, cfg: cfg}
 }
 
 func (s *SMTPServer) tlsConfig() (*tls.Config, error) {
@@ -119,9 +121,12 @@ type smtpSession struct {
 	mode          smtpMode
 	from          string
 	rcpts         []string
+	localRcpts    []string
+	externalRcpts []string
 	authenticated bool
 	userID        uint
 	email         string
+	user          *db.User
 }
 
 // AuthMechanisms returns supported SMTP AUTH mechanisms.
@@ -153,6 +158,7 @@ func (s *smtpSession) Auth(mech string) (sasl.Server, error) {
 
 		s.authenticated = true
 		s.userID = user.ID
+		s.user = user
 		s.email = user.Username + "@" + domainName
 		return nil
 	}), nil
@@ -160,30 +166,50 @@ func (s *smtpSession) Auth(mech string) (sasl.Server, error) {
 
 // Mail records the sender address (MAIL FROM command).
 func (s *smtpSession) Mail(from string, opts *smtp.MailOptions) error {
-	if s.mode != smtpModeInbound {
-		if !s.authenticated {
-			return smtp.ErrAuthRequired
-		}
-		if !strings.EqualFold(strings.TrimSpace(from), s.email) {
-			return fmt.Errorf("sender address must match authenticated user")
-		}
+	if s.mode != smtpModeInbound && !s.authenticated {
+		return smtp.ErrAuthRequired
+	}
+	// Authenticated users may only send as themselves, preventing spoofing.
+	if s.authenticated && !strings.EqualFold(strings.TrimSpace(from), s.email) {
+		return fmt.Errorf("sender address must match authenticated user")
 	}
 
 	s.from = from
 	s.rcpts = s.rcpts[:0]
+	s.localRcpts = s.localRcpts[:0]
+	s.externalRcpts = s.externalRcpts[:0]
 	return nil
 }
 
 // Rcpt validates and records a recipient address (RCPT TO command).
+// Local recipients are delivered to the mailbox; external recipients are
+// allowed only for authenticated users and go to the outbound queue,
+// which prevents open relay.
 func (s *smtpSession) Rcpt(to string, opts *smtp.RcptOptions) error {
-	if _, err := s.localUserByEmail(to); err != nil {
-		if s.authenticated {
-			return fmt.Errorf("external relay is not supported yet: %s", to)
-		}
+	to = strings.TrimSpace(to)
+	if to == "" {
+		return fmt.Errorf("invalid recipient address: %s", to)
+	}
+
+	if _, err := s.localUserByEmail(to); err == nil {
+		s.rcpts = append(s.rcpts, to)
+		s.localRcpts = append(s.localRcpts, to)
+		return nil
+	}
+
+	// External recipient: only authenticated local users may relay.
+	if !s.authenticated {
 		return fmt.Errorf("relay access denied: %s", to)
 	}
 
+	// Sender verification must have been enforced in Mail() already.
+	ob := s.backend.server.outbound
+	if ob == nil || !ob.Enabled() {
+		return fmt.Errorf("external delivery is disabled: %s", to)
+	}
+
 	s.rcpts = append(s.rcpts, to)
+	s.externalRcpts = append(s.externalRcpts, to)
 	return nil
 }
 
@@ -192,9 +218,11 @@ func (s *smtpSession) localUserByEmail(email string) (*db.User, error) {
 }
 
 // Data handles the message body and stores it for local recipients.
+// External recipients (authenticated sessions only) are queued for
+// outbound delivery.
 func (s *smtpSession) Data(r io.Reader) error {
 	if len(s.rcpts) == 0 {
-		return fmt.Errorf("no accepted local recipients")
+		return fmt.Errorf("no accepted recipients")
 	}
 
 	data, err := io.ReadAll(r)
@@ -207,7 +235,8 @@ func (s *smtpSession) Data(r io.Reader) error {
 		return err
 	}
 
-	for _, rcpt := range s.rcpts {
+	// Local recipients: deliver to INBOX.
+	for _, rcpt := range s.localRcpts {
 		user, err := s.localUserByEmail(rcpt)
 		if err != nil {
 			log.Printf("SMTP: recipient not found %s, skipping", rcpt)
@@ -218,6 +247,24 @@ func (s *smtpSession) Data(r io.Reader) error {
 			continue
 		}
 		log.Printf("SMTP: message delivered to %s", rcpt)
+	}
+
+	// External recipients: queue for outbound delivery.
+	if len(s.externalRcpts) > 0 {
+		ob := s.backend.server.outbound
+		if ob == nil {
+			return fmt.Errorf("outbound delivery is unavailable")
+		}
+		maxRcpt := ob.MaxRecipients()
+		if maxRcpt > 0 && len(s.externalRcpts) > maxRcpt {
+			return fmt.Errorf("too many external recipients: %d (max %d)", len(s.externalRcpts), maxRcpt)
+		}
+		for _, rcpt := range s.externalRcpts {
+			if _, err := ob.Enqueue(s.user, s.email, rcpt, data); err != nil {
+				return fmt.Errorf("failed to queue external recipient %s: %v", rcpt, err)
+			}
+			log.Printf("SMTP: external message queued for %s", rcpt)
+		}
 	}
 
 	if s.authenticated && s.userID != 0 && s.mode != smtpModeInbound {
@@ -336,6 +383,8 @@ func (s *smtpSession) saveMessage(userID uint, folder string, parsed *parsedSMTP
 func (s *smtpSession) Reset() {
 	s.from = ""
 	s.rcpts = s.rcpts[:0]
+	s.localRcpts = s.localRcpts[:0]
+	s.externalRcpts = s.externalRcpts[:0]
 }
 
 // Logout is called when the SMTP connection is closed.

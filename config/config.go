@@ -78,6 +78,18 @@ type BanConfig struct {
 	BanDurationMin  int `toml:"ban_duration_min"`  // Default: 30 (minutes)
 }
 
+// OutboundConfig holds outbound (external) mail delivery settings.
+type OutboundConfig struct {
+	Hostname       string `toml:"hostname"`        // EHLO 主机名，留空使用 [smtp] domain
+	PollInterval   int    `toml:"poll_interval"`   // 队列扫描间隔（秒）
+	MaxAttempts    int    `toml:"max_attempts"`    // 单封邮件最大投递尝试次数
+	RetryBaseMin   int    `toml:"retry_base_min"`  // 重试退避基数（分钟），指数增长
+	MaxRecipients  int    `toml:"max_recipients"`  // 单封邮件最大外部收件人数
+	MaxPerMin      int    `toml:"max_per_min"`     // 每用户每分钟最大外发数
+	MaxPerDay      int    `toml:"max_per_day"`     // 每用户每日最大外发数，0 表示禁用外部投递
+	ConnectTimeout int    `toml:"connect_timeout"` // 连接远程 MX 超时（秒）
+}
+
 // Config is the top-level configuration structure.
 type Config struct {
 	Database DatabaseConfig `toml:"database"`
@@ -88,6 +100,7 @@ type Config struct {
 	POP3     POP3Config     `toml:"pop3"`
 	Auth     AuthConfig     `toml:"auth"`
 	Ban      BanConfig      `toml:"ban"`
+	Outbound OutboundConfig `toml:"outbound"`
 }
 
 // isWindows returns true if the current OS is Windows.
@@ -157,6 +170,15 @@ func defaultConfig() *Config {
 			MaxFailAttempts: 5,
 			BanDurationMin:  30,
 		},
+		Outbound: OutboundConfig{
+			PollInterval:   15, // 15 秒扫描一次队列
+			MaxAttempts:    12, // 最多尝试 12 次
+			RetryBaseMin:   5,  // 5/10/20/40/... 分钟指数退避
+			MaxRecipients:  50, // 单封最多 50 个外部收件人
+			MaxPerMin:      30, // 每用户每分钟 30 封
+			MaxPerDay:      500,
+			ConnectTimeout: 30, // 连接远程 MX 超时 30 秒
+		},
 	}
 }
 
@@ -216,6 +238,27 @@ func mergeDefaults(cfg *Config, defaults *Config) *Config {
 	}
 	if cfg.Ban.BanDurationMin == 0 {
 		cfg.Ban.BanDurationMin = defaults.Ban.BanDurationMin
+	}
+	if cfg.Outbound.PollInterval == 0 {
+		cfg.Outbound.PollInterval = defaults.Outbound.PollInterval
+	}
+	if cfg.Outbound.MaxAttempts == 0 {
+		cfg.Outbound.MaxAttempts = defaults.Outbound.MaxAttempts
+	}
+	if cfg.Outbound.RetryBaseMin == 0 {
+		cfg.Outbound.RetryBaseMin = defaults.Outbound.RetryBaseMin
+	}
+	if cfg.Outbound.MaxRecipients == 0 {
+		cfg.Outbound.MaxRecipients = defaults.Outbound.MaxRecipients
+	}
+	if cfg.Outbound.MaxPerMin == 0 {
+		cfg.Outbound.MaxPerMin = defaults.Outbound.MaxPerMin
+	}
+	if cfg.Outbound.MaxPerDay == 0 {
+		cfg.Outbound.MaxPerDay = defaults.Outbound.MaxPerDay
+	}
+	if cfg.Outbound.ConnectTimeout == 0 {
+		cfg.Outbound.ConnectTimeout = defaults.Outbound.ConnectTimeout
 	}
 	return cfg
 }

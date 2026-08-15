@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"mail_go/internal/db"
+	"mail_go/internal/outbound"
 	"mail_go/internal/storage"
 	"mail_go/internal/store"
 
@@ -18,15 +20,40 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// MailHandler handles mail-related routes (inbox, compose, sent, view, etc.).
-type MailHandler struct {
-	stores  *store.Stores
-	storage *storage.AttachmentStorage
+// pendingAttachment holds an uploaded attachment while the message is built.
+type pendingAttachment struct {
+	filename    string
+	contentType string
+	data        []byte
 }
 
-// NewMailHandler creates a new MailHandler with the given stores and attachment storage.
-func NewMailHandler(stores *store.Stores, attStorage *storage.AttachmentStorage) *MailHandler {
-	return &MailHandler{stores: stores, storage: attStorage}
+// base64LineWrap encodes data as base64 wrapped at 76 columns (RFC 2045).
+func base64LineWrap(data []byte) string {
+	enc := base64.StdEncoding.EncodeToString(data)
+	if len(enc) <= 76 {
+		return enc
+	}
+	var sb strings.Builder
+	for len(enc) > 76 {
+		sb.WriteString(enc[:76])
+		sb.WriteString("\r\n")
+		enc = enc[76:]
+	}
+	sb.WriteString(enc)
+	return sb.String()
+}
+
+// MailHandler handles mail-related routes (inbox, compose, sent, view, etc.).
+type MailHandler struct {
+	stores   *store.Stores
+	storage  *storage.AttachmentStorage
+	outbound *outbound.Manager
+}
+
+// NewMailHandler creates a new MailHandler with the given stores, attachment
+// storage and outbound delivery manager.
+func NewMailHandler(stores *store.Stores, attStorage *storage.AttachmentStorage, ob *outbound.Manager) *MailHandler {
+	return &MailHandler{stores: stores, storage: attStorage, outbound: ob}
 }
 
 // Inbox renders the inbox page showing all messages in the user's INBOX folder.
@@ -161,6 +188,7 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 
 	// Handle attachments and check quota
 	form, multipartErr := c.MultipartForm()
+	attachments := make([]pendingAttachment, 0)
 	if multipartErr == nil {
 		files := form.File["attachments"]
 		if len(files) > 0 {
@@ -186,6 +214,32 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 					return
 				}
 			}
+			// Read all attachment files into memory once (used for both the
+			// MIME message body and the stored attachment records).
+			for _, file := range files {
+				f, err := file.Open()
+				if err != nil {
+					continue
+				}
+				buf, readErr := io.ReadAll(f)
+				f.Close()
+				if readErr != nil {
+					continue
+				}
+
+				// Determine content type from extension
+				contentType := "application/octet-stream"
+				ext := strings.ToLower(filepath.Ext(file.Filename))
+				if ct, ok := mimeTypes[ext]; ok {
+					contentType = ct
+				}
+
+				attachments = append(attachments, pendingAttachment{
+					filename:    file.Filename,
+					contentType: contentType,
+					data:        buf,
+				})
+			}
 		}
 	}
 
@@ -206,6 +260,16 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 	sb.WriteString(fmt.Sprintf("Date: %s\r\n", now.Format(time.RFC1123Z)))
 	sb.WriteString("MIME-Version: 1.0\r\n")
 
+	// Attachments are wrapped in an outer multipart/mixed container.
+	outerBoundary := ""
+	hasAttachments := len(attachments) > 0
+	if hasAttachments {
+		outerBoundary = fmt.Sprintf("----=_Mixed_%s", uuid.New().String())
+		sb.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=\"%s\"\r\n", outerBoundary))
+		sb.WriteString("\r\n")
+		sb.WriteString(fmt.Sprintf("--%s\r\n", outerBoundary))
+	}
+
 	// Build message body with multipart/alternative if HTML is present
 	if htmlBody != "" {
 		boundary := fmt.Sprintf("----=_Part_%s", uuid.New().String())
@@ -222,32 +286,83 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 		sb.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
 		sb.WriteString("\r\n")
 		sb.WriteString(body)
+		sb.WriteString("\r\n")
+	}
+
+	// Append attachment parts to the multipart/mixed container.
+	for _, att := range attachments {
+		sb.WriteString(fmt.Sprintf("--%s\r\n", outerBoundary))
+		sb.WriteString(fmt.Sprintf("Content-Type: %s; name=\"%s\"\r\n", att.contentType, att.filename))
+		sb.WriteString("Content-Transfer-Encoding: base64\r\n")
+		sb.WriteString(fmt.Sprintf("Content-Disposition: attachment; filename=\"%s\"\r\n\r\n", att.filename))
+		sb.WriteString(base64LineWrap(att.data))
+		sb.WriteString("\r\n")
+	}
+	if hasAttachments {
+		sb.WriteString(fmt.Sprintf("--%s--\r\n", outerBoundary))
 	}
 
 	allRecipients := append(parseAddressInput(to), parseAddressInput(cc)...)
 	localUsers := make([]*db.User, 0, len(allRecipients))
-	var unsupported []string
+	var externalRecipients []string
 	for _, rcpt := range allRecipients {
 		user, err := h.stores.Users.GetByEmail(rcpt)
 		if err != nil {
-			unsupported = append(unsupported, rcpt)
+			externalRecipients = append(externalRecipients, rcpt)
 			continue
 		}
 		localUsers = append(localUsers, user)
 	}
-	if len(unsupported) > 0 {
-		c.HTML(http.StatusBadRequest, "compose", gin.H{
-			"currentUser":  currentUser,
-			"activeFolder": "compose",
-			"error":        fmt.Sprintf("暂不支持外部投递: %s", strings.Join(unsupported, ", ")),
-			"to":           to,
-			"subject":      subject,
-			"cc":           cc,
-			"bodyContent":  htmlBody,
-			"usedBytes":    currentUser.UsedBytes,
-			"quotaBytes":   currentUser.QuotaBytes,
-		})
-		return
+
+	// Queue external recipients for outbound delivery first, so that
+	// failures (rate limit, invalid address, disabled outbound) abort
+	// before any local copies are created.
+	if len(externalRecipients) > 0 {
+		ob := h.outbound
+		if ob == nil || !ob.Enabled() {
+			c.HTML(http.StatusBadRequest, "compose", gin.H{
+				"currentUser":  currentUser,
+				"activeFolder": "compose",
+				"error":        "外部投递未启用",
+				"to":           to,
+				"subject":      subject,
+				"cc":           cc,
+				"bodyContent":  htmlBody,
+				"usedBytes":    currentUser.UsedBytes,
+				"quotaBytes":   currentUser.QuotaBytes,
+			})
+			return
+		}
+		if maxRcpt := ob.MaxRecipients(); maxRcpt > 0 && len(externalRecipients) > maxRcpt {
+			c.HTML(http.StatusBadRequest, "compose", gin.H{
+				"currentUser":  currentUser,
+				"activeFolder": "compose",
+				"error":        fmt.Sprintf("外部收件人过多：最多 %d 个", maxRcpt),
+				"to":           to,
+				"subject":      subject,
+				"cc":           cc,
+				"bodyContent":  htmlBody,
+				"usedBytes":    currentUser.UsedBytes,
+				"quotaBytes":   currentUser.QuotaBytes,
+			})
+			return
+		}
+		for _, rcpt := range externalRecipients {
+			if _, err := ob.Enqueue(currentUser, fromAddr, rcpt, []byte(sb.String())); err != nil {
+				c.HTML(http.StatusBadRequest, "compose", gin.H{
+					"currentUser":  currentUser,
+					"activeFolder": "compose",
+					"error":        fmt.Sprintf("外发邮件入队失败 (%s): %v", rcpt, err),
+					"to":           to,
+					"subject":      subject,
+					"cc":           cc,
+					"bodyContent":  htmlBody,
+					"usedBytes":    currentUser.UsedBytes,
+					"quotaBytes":   currentUser.QuotaBytes,
+				})
+				return
+			}
+		}
 	}
 
 	for _, rcptUser := range localUsers {
@@ -312,45 +427,24 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 		return
 	}
 
-	// Handle attachments
-	if multipartErr == nil {
-		files := form.File["attachments"]
-		for _, file := range files {
-			// Read file content
-			f, err := file.Open()
-			if err != nil {
-				continue
-			}
-			buf, err := io.ReadAll(f)
-			f.Close()
-			if err != nil {
-				continue
-			}
-
-			// Save to disk
-			relPath, err := h.storage.Save(file.Filename, buf)
-			if err != nil {
-				continue
-			}
-
-			// Determine content type from extension
-			contentType := "application/octet-stream"
-			ext := strings.ToLower(filepath.Ext(file.Filename))
-			if ct, ok := mimeTypes[ext]; ok {
-				contentType = ct
-			}
-
-			att := &db.Attachment{
-				MessageID:   msg.ID,
-				FileName:    file.Filename,
-				FilePath:    relPath,
-				ContentType: contentType,
-				FileSize:    file.Size,
-			}
-			_ = h.stores.Attachments.Create(att)
-			// Update user used bytes
-			_ = h.stores.Users.UpdateUsedBytes(userID, att.FileSize)
+	// Save attachment records linked to the Sent copy (bytes were already
+	// read during message construction).
+	for _, att := range attachments {
+		relPath, err := h.storage.Save(att.filename, att.data)
+		if err != nil {
+			continue
 		}
+
+		attRecord := &db.Attachment{
+			MessageID:   msg.ID,
+			FileName:    att.filename,
+			FilePath:    relPath,
+			ContentType: att.contentType,
+			FileSize:    int64(len(att.data)),
+		}
+		_ = h.stores.Attachments.Create(attRecord)
+		// Update user used bytes
+		_ = h.stores.Users.UpdateUsedBytes(userID, attRecord.FileSize)
 	}
 
 	c.Redirect(http.StatusFound, "/sent")

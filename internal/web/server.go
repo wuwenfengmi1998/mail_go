@@ -11,6 +11,7 @@ import (
 
 	"mail_go/config"
 	"mail_go/internal/mailutil"
+	"mail_go/internal/outbound"
 	"mail_go/internal/storage"
 	"mail_go/internal/store"
 	"mail_go/internal/web/handlers"
@@ -44,6 +45,7 @@ type WebServer struct {
 	storageCfg config.StorageConfig
 	authCfg    config.AuthConfig
 	banCfg     config.BanConfig
+	outbound   *outbound.Manager
 }
 
 // templateFuncs returns custom template functions for rendering.
@@ -82,7 +84,7 @@ func templateFuncs() template.FuncMap {
 
 // NewWebServer creates a new WebServer, initializes the Gin engine,
 // configures sessions, middleware, and registers all routes.
-func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, storageCfg config.StorageConfig, authCfg config.AuthConfig, banCfg config.BanConfig) *WebServer {
+func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, storageCfg config.StorageConfig, authCfg config.AuthConfig, banCfg config.BanConfig, ob *outbound.Manager) *WebServer {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	engine.Use(gin.Logger())
@@ -112,6 +114,7 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 		storageCfg: storageCfg,
 		authCfg:    authCfg,
 		banCfg:     banCfg,
+		outbound:   ob,
 	}
 
 	ws.registerRoutes()
@@ -121,8 +124,8 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 // registerRoutes sets up all HTTP routes with their handlers and middleware.
 func (ws *WebServer) registerRoutes() {
 	authHandler := handlers.NewAuthHandler(ws.stores, ws.authCfg, ws.banCfg)
-	mailHandler := handlers.NewMailHandler(ws.stores, ws.storage)
-	adminHandler := handlers.NewAdminHandler(ws.stores, ws.storage, filepath.Join(ws.storageCfg.BaseDir, "tls", "domains"))
+	mailHandler := handlers.NewMailHandler(ws.stores, ws.storage, ws.outbound)
+	adminHandler := handlers.NewAdminHandler(ws.stores, ws.storage, filepath.Join(ws.storageCfg.BaseDir, "tls", "domains"), ws.outbound)
 
 	// Apply BanMiddleware globally before public routes
 	ws.engine.Use(middleware.BanMiddleware(ws.stores))
@@ -182,6 +185,9 @@ func (ws *WebServer) registerRoutes() {
 		admin.GET("/mails", adminHandler.ListMails)
 		admin.GET("/mails/:id", adminHandler.AdminViewMail)
 		admin.GET("/attachment/:id", adminHandler.AdminDownloadAttachment)
+		admin.GET("/outbound", adminHandler.ListOutbound)
+		admin.POST("/outbound/:id/retry", adminHandler.RetryOutbound)
+		admin.POST("/outbound/:id/cancel", adminHandler.CancelOutbound)
 		admin.GET("/bans", adminHandler.ListBans)
 		admin.POST("/bans/:id/unban", adminHandler.UnbanIP)
 		admin.POST("/bans/cleanup", adminHandler.CleanupBans)
