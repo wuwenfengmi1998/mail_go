@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/textproto"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -47,6 +48,7 @@ func newPermError(format string, args ...interface{}) *DeliveryError {
 // Mailer performs direct MX delivery of a single message.
 type Mailer struct {
 	Hostname       string // EHLO hostname presented to remote servers
+	Port           int    // destination port, 0 means the default SMTP port 25
 	ConnectTimeout time.Duration
 }
 
@@ -56,6 +58,14 @@ func NewMailer(hostname string, connectTimeout time.Duration) *Mailer {
 		hostname = "localhost"
 	}
 	return &Mailer{Hostname: hostname, ConnectTimeout: connectTimeout}
+}
+
+// port returns the destination port, defaulting to 25.
+func (m *Mailer) port() int {
+	if m.Port == 0 {
+		return 25
+	}
+	return m.Port
 }
 
 // Deliver sends one message to one recipient via the recipient domain's MX.
@@ -183,7 +193,7 @@ func (c *smtpClient) hello(hostname string) error {
 
 // deliverToHost performs a full SMTP transaction with a single MX host.
 func (m *Mailer) deliverToHost(host, from, to string, data []byte) (string, error) {
-	addr := net.JoinHostPort(host, "25")
+	addr := net.JoinHostPort(host, strconv.Itoa(m.port()))
 
 	ctx, cancel := context.WithTimeout(context.Background(), m.ConnectTimeout)
 	defer cancel()
