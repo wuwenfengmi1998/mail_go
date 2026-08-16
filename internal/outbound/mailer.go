@@ -3,12 +3,14 @@
 // Messages queued for external recipients are stored in the outbound_messages
 // table and delivered by the Manager's background worker: MX lookup, SMTP
 // transaction over port 25 with opportunistic STARTTLS, exponential backoff
-// retries, permanent-failure bounces and DKIM signing.
+// retries, permanent-failure bounces and DKIM signing. A smarthost relay can
+// be configured for servers whose own IP is blocklisted (e.g. PBL).
 package outbound
 
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -45,10 +47,22 @@ func newPermError(format string, args ...interface{}) *DeliveryError {
 	return &DeliveryError{Permanent: true, Msg: fmt.Sprintf(format, args...)}
 }
 
-// Mailer performs direct MX delivery of a single message.
+// RelayConfig describes a smarthost through which all external mail is sent.
+type RelayConfig struct {
+	Host     string
+	Port     int    // 465 = implicit TLS; other ports may use STARTTLS
+	Username string // AUTH PLAIN credentials (empty = no authentication)
+	Password string
+	StartTLS bool // use STARTTLS on non-465 ports
+}
+
+// Mailer performs direct MX delivery (or smarthost relay) of a single message.
 type Mailer struct {
 	Hostname       string // EHLO hostname presented to remote servers
 	Port           int    // destination port, 0 means the default SMTP port 25
+	Relay          *RelayConfig
+	IPFamily       string // "ipv4" (default), "ipv6" or "auto"
+	SourceIP       string // optional source address to bind (e.g. a static IPv6)
 	ConnectTimeout time.Duration
 }
 
@@ -68,17 +82,22 @@ func (m *Mailer) port() int {
 	return m.Port
 }
 
-// Deliver sends one message to one recipient via the recipient domain's MX.
-// It returns the final SMTP response text on success and a *DeliveryError on
-// failure.
+// Deliver sends one message to one recipient. When a relay is configured the
+// message goes through the smarthost; otherwise the recipient domain's MX is
+// used. It returns the final SMTP response text on success and a
+// *DeliveryError on failure.
 func (m *Mailer) Deliver(from, to string, data []byte) (string, error) {
+	if m.Relay != nil && m.Relay.Host != "" {
+		return m.deliverViaRelay(from, to, data)
+	}
+
 	at := strings.LastIndex(to, "@")
 	if at < 0 || at == len(to)-1 {
 		return "", newPermError("invalid recipient address: %s", to)
 	}
 	domain := strings.ToLower(strings.TrimSpace(to[at+1:]))
 
-	mxHosts, err := lookupMX(domain)
+	mxHosts, err := lookupMX(domain, m.IPFamily)
 	if err != nil {
 		var de *DeliveryError
 		if errors.As(err, &de) {
@@ -109,6 +128,18 @@ func (m *Mailer) Deliver(from, to string, data []byte) (string, error) {
 		lastErr = newTempError("no MX hosts available for %s", domain)
 	}
 	return "", lastErr
+}
+
+// deliverViaRelay sends the message through the configured smarthost.
+func (m *Mailer) deliverViaRelay(from, to string, data []byte) (string, error) {
+	port := m.Relay.Port
+	if port == 0 {
+		port = 587
+	}
+	implicitTLS := port == 465
+	return m.smtpTransaction(m.Relay.Host, port, implicitTLS,
+		m.Relay.StartTLS && !implicitTLS,
+		m.Relay.Username, m.Relay.Password, from, to, data)
 }
 
 // smtpClient wraps a textproto connection to a remote SMTP server.
@@ -191,15 +222,37 @@ func (c *smtpClient) hello(hostname string) error {
 	return nil
 }
 
+// authPlain performs AUTH PLAIN with the initial-response form, falling back
+// to the two-step form when the server asks for credentials separately.
+func (c *smtpClient) authPlain(username, password string) error {
+	b64 := base64.StdEncoding.EncodeToString([]byte("\x00" + username + "\x00" + password))
+	code, msg, err := c.cmd(235, "AUTH PLAIN %s", b64)
+	if err != nil {
+		if code == 334 {
+			_, _, err = c.cmd(235, "%s", b64)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	_ = msg
+	return nil
+}
+
 // deliverToHost performs a full SMTP transaction with a single MX host.
 func (m *Mailer) deliverToHost(host, from, to string, data []byte) (string, error) {
-	addr := net.JoinHostPort(host, strconv.Itoa(m.port()))
+	return m.smtpTransaction(host, m.port(), false, false, "", "", from, to, data)
+}
+
+// smtpTransaction performs one complete SMTP session: connect, greeting,
+// optional implicit TLS / STARTTLS, optional AUTH PLAIN, MAIL/RCPT/DATA/QUIT.
+func (m *Mailer) smtpTransaction(host string, port int, implicitTLS, startTLS bool, username, password, from, to string, data []byte) (string, error) {
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
 
 	ctx, cancel := context.WithTimeout(context.Background(), m.ConnectTimeout)
 	defer cancel()
 
-	dialer := &net.Dialer{Timeout: m.ConnectTimeout}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	conn, err := m.dialSMTP(ctx, addr)
 	if err != nil {
 		return "", newTempError("connect to %s failed: %v", addr, err)
 	}
@@ -212,25 +265,49 @@ func (m *Mailer) deliverToHost(host, from, to string, data []byte) (string, erro
 		return "", classifyResponse(err, msg)
 	}
 
-	if err := c.hello(m.Hostname); err != nil {
-		return "", err
+	tlsServerName := host
+	if ip := net.ParseIP(host); ip != nil {
+		tlsServerName = "" // no SNI for IP literals
 	}
 
-	// Opportunistic STARTTLS (RFC 3207): only when the server advertises it.
-	if _, ok := c.exts["STARTTLS"]; ok {
-		if _, _, err := c.cmd(220, "STARTTLS"); err != nil {
+	if implicitTLS {
+		tlsConn, err := tlsClientHandshake(ctx, conn, tlsServerName, host)
+		if err != nil {
 			return "", err
-		}
-		tlsConn := tls.Client(conn, &tls.Config{
-			ServerName:         host,
-			InsecureSkipVerify: true, // remote MX certificates often cannot be verified
-		})
-		if err := tlsConn.HandshakeContext(ctx); err != nil {
-			return "", newTempError("TLS handshake with %s failed: %v", host, err)
 		}
 		c.txt = textproto.NewConn(tlsConn)
 		if err := c.hello(m.Hostname); err != nil {
 			return "", err
+		}
+	} else {
+		if err := c.hello(m.Hostname); err != nil {
+			return "", err
+		}
+		// Opportunistic STARTTLS: only when the server advertises it, unless
+		// startTLS is explicitly requested (smarthost), in which case a
+		// non-advertising server is an error.
+		_, adv := c.exts["STARTTLS"]
+		if adv || startTLS {
+			if !adv && startTLS {
+				return "", newTempError("%s does not advertise STARTTLS", host)
+			}
+			if _, _, err := c.cmd(220, "STARTTLS"); err != nil {
+				return "", err
+			}
+			tlsConn, err := tlsClientHandshake(ctx, conn, tlsServerName, host)
+			if err != nil {
+				return "", err
+			}
+			c.txt = textproto.NewConn(tlsConn)
+			if err := c.hello(m.Hostname); err != nil {
+				return "", err
+			}
+		}
+	}
+
+	if username != "" {
+		if err := c.authPlain(username, password); err != nil {
+			return "", fmt.Errorf("AUTH PLAIN with %s failed: %w", host, err)
 		}
 	}
 
@@ -276,6 +353,58 @@ func (m *Mailer) deliverToHost(host, from, to string, data []byte) (string, erro
 	return fmt.Sprintf("%d %s", code, msg), nil
 }
 
+// tlsClientHandshake upgrades a plain connection to TLS.
+func tlsClientHandshake(ctx context.Context, conn net.Conn, serverName, host string) (net.Conn, error) {
+	tlsConn := tls.Client(conn, &tls.Config{
+		ServerName:         serverName,
+		InsecureSkipVerify: true, // remote MX certificates often cannot be verified
+	})
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		return nil, newTempError("TLS handshake with %s failed: %v", host, err)
+	}
+	return tlsConn, nil
+}
+
+// dialSMTP connects to a remote SMTP server, honoring the configured IP
+// family and optional source address binding.
+//
+// The default is IPv4-only: many receiving systems (e.g. Gmail) reject mail
+// from IPv6 addresses without PTR records, and the IPv4 address of a mail
+// host usually has a forward-confirmed PTR and a matching SPF entry. Switch
+// IPFamily to "ipv6"/"auto" after the ISP has configured a PTR for the
+// source address and SourceIP binds the connection to that static address.
+func (m *Mailer) dialSMTP(ctx context.Context, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+
+	network := "tcp4"
+	if ip := net.ParseIP(host); ip != nil {
+		// Literal destination: pick the matching family.
+		if ip.To4() == nil {
+			network = "tcp6"
+		}
+	} else {
+		switch strings.ToLower(m.IPFamily) {
+		case "ipv6":
+			network = "tcp6"
+		case "auto":
+			network = "tcp"
+		default: // "ipv4" and anything unrecognized
+			network = "tcp4"
+		}
+	}
+
+	dialer := &net.Dialer{Timeout: m.ConnectTimeout}
+	if m.SourceIP != "" {
+		if ip := net.ParseIP(m.SourceIP); ip != nil {
+			dialer.LocalAddr = &net.TCPAddr{IP: ip}
+		}
+	}
+	return dialer.DialContext(ctx, network, net.JoinHostPort(host, port))
+}
+
 // is8Bit reports whether the data contains any byte >= 0x80.
 func is8Bit(data []byte) bool {
 	for _, b := range data {
@@ -288,8 +417,9 @@ func is8Bit(data []byte) bool {
 
 // lookupMX resolves the MX hosts for a domain, sorted by preference.
 // Per RFC 5321 section 5.1, when no MX record exists the domain itself is
-// used as an implicit MX with preference 0.
-func lookupMX(domain string) ([]string, error) {
+// used as an implicit MX with preference 0. ipFamily controls the ordering
+// of the A/AAAA fallback ("ipv6" puts IPv6 first, otherwise IPv4 first).
+func lookupMX(domain, ipFamily string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -308,9 +438,19 @@ func lookupMX(domain string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		hosts := make([]string, 0, len(ips))
+		var hosts []string
+		var v6 []string
 		for _, ip := range ips {
-			hosts = append(hosts, ip.String())
+			if ip.IP.To4() != nil {
+				hosts = append(hosts, ip.IP.String())
+			} else {
+				v6 = append(v6, ip.IP.String())
+			}
+		}
+		if strings.EqualFold(ipFamily, "ipv6") {
+			hosts = append(v6, hosts...)
+		} else {
+			hosts = append(hosts, v6...)
 		}
 		if len(hosts) == 0 {
 			return nil, fmt.Errorf("no MX or A records for %s", domain)

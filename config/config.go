@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -88,6 +89,19 @@ type OutboundConfig struct {
 	MaxPerMin      int    `toml:"max_per_min"`     // 每用户每分钟最大外发数
 	MaxPerDay      int    `toml:"max_per_day"`     // 每用户每日最大外发数，0 表示禁用外部投递
 	ConnectTimeout int    `toml:"connect_timeout"` // 连接远程 MX 超时（秒）
+
+	// Smarthost relay: when relay_host is non-empty, all external mail is
+	// delivered through this relay instead of direct MX delivery. Useful when
+	// the server IP is listed in PBL/blocklists (residential/dynamic IPs).
+	RelayHost     string `toml:"relay_host"`     // 中继服务器地址，留空则直投 MX
+	RelayPort     int    `toml:"relay_port"`     // 465 = 隐式 TLS，其他端口先尝试 STARTTLS
+	RelayUser     string `toml:"relay_user"`     // 中继认证用户名（AUTH PLAIN）
+	RelayPassword string `toml:"relay_password"` // 中继认证密码
+	RelayStartTLS bool   `toml:"relay_starttls"` // 非 465 端口是否使用 STARTTLS
+
+	// IP family and source address binding for outbound connections.
+	IPFamily string `toml:"ip_family"` // ipv4（默认，PTR/SPF 最可靠）| ipv6 | auto
+	SourceIP string `toml:"source_ip"` // 出站源地址绑定（如静态 IPv6），留空由内核选择
 }
 
 // Config is the top-level configuration structure.
@@ -177,7 +191,10 @@ func defaultConfig() *Config {
 			MaxRecipients:  50, // 单封最多 50 个外部收件人
 			MaxPerMin:      30, // 每用户每分钟 30 封
 			MaxPerDay:      500,
-			ConnectTimeout: 30, // 连接远程 MX 超时 30 秒
+			ConnectTimeout: 30,  // 连接远程 MX 超时 30 秒
+			RelayPort:      587, // smarthost 默认提交端口
+			RelayStartTLS:  true,
+			IPFamily:       "ipv4",
 		},
 	}
 }
@@ -260,6 +277,12 @@ func mergeDefaults(cfg *Config, defaults *Config) *Config {
 	if cfg.Outbound.ConnectTimeout == 0 {
 		cfg.Outbound.ConnectTimeout = defaults.Outbound.ConnectTimeout
 	}
+	if cfg.Outbound.RelayPort == 0 {
+		cfg.Outbound.RelayPort = defaults.Outbound.RelayPort
+	}
+	if cfg.Outbound.IPFamily == "" {
+		cfg.Outbound.IPFamily = defaults.Outbound.IPFamily
+	}
 	return cfg
 }
 
@@ -308,6 +331,12 @@ func LoadConfig() (*Config, error) {
 	cfg := &Config{}
 	if err := toml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("解析配置文件失败: %w", err)
+	}
+
+	// relay_starttls defaults to true for safety; the raw file is checked
+	// because TOML decoding cannot distinguish an absent bool from false.
+	if !strings.Contains(string(data), "relay_starttls") {
+		cfg.Outbound.RelayStartTLS = defaults.Outbound.RelayStartTLS
 	}
 
 	// Merge defaults for any missing fields
