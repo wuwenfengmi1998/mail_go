@@ -2,6 +2,7 @@ package outbound
 
 import (
 	"bufio"
+	"encoding/base64"
 	"net"
 	"strings"
 	"testing"
@@ -224,4 +225,118 @@ func TestMailerPermanentFailure(t *testing.T) {
 		t.Fatalf("expected code 550, got %d", de.Code)
 	}
 	<-done
+}
+
+func TestMailerSmarthostRelay(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	type result struct {
+		gotData  []byte
+		authLine string
+	}
+	ch := make(chan result, 1)
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			ch <- result{}
+			return
+		}
+		defer conn.Close()
+		r := bufio.NewReader(conn)
+		w := bufio.NewWriter(conn)
+		_, _ = w.WriteString("220 relay.test ESMTP\r\n")
+		_ = w.Flush()
+
+		var authLine string
+		var got []byte
+		for {
+			line, err := r.ReadString('\n')
+			if err != nil {
+				break
+			}
+			trimmed := strings.TrimRight(line, "\r\n")
+			up := strings.ToUpper(trimmed)
+			switch {
+			case strings.HasPrefix(up, "EHLO"):
+				_, _ = w.WriteString("250-relay.test\r\n250-8BITMIME\r\n250 AUTH PLAIN\r\n")
+				_ = w.Flush()
+			case strings.HasPrefix(up, "AUTH PLAIN"):
+				authLine = trimmed
+				_, _ = w.WriteString("235 2.0.0 ok\r\n")
+				_ = w.Flush()
+			case strings.HasPrefix(up, "MAIL FROM"):
+				if authLine == "" {
+					_, _ = w.WriteString("530 5.7.0 auth required\r\n")
+					_ = w.Flush()
+					break
+				}
+				_, _ = w.WriteString("250 ok\r\n")
+				_ = w.Flush()
+			case strings.HasPrefix(up, "RCPT TO"):
+				_, _ = w.WriteString("250 ok\r\n")
+				_ = w.Flush()
+			case strings.HasPrefix(up, "DATA"):
+				_, _ = w.WriteString("354 go\r\n")
+				_ = w.Flush()
+				for {
+					dl, err := r.ReadString('\n')
+					if err != nil {
+						break
+					}
+					if strings.TrimRight(dl, "\r\n") == "." {
+						break
+					}
+					if strings.HasPrefix(dl, "..") {
+						dl = dl[1:]
+					}
+					got = append(got, []byte(dl)...)
+				}
+				_, _ = w.WriteString("250 queued\r\n")
+				_ = w.Flush()
+			case strings.HasPrefix(up, "QUIT"):
+				_, _ = w.WriteString("221 bye\r\n")
+				_ = w.Flush()
+				ch <- result{gotData: got, authLine: authLine}
+				return
+			}
+		}
+		ch <- result{}
+	}()
+
+	m := NewMailer("mail.lmve.net", 10*time.Second)
+	m.Relay = &RelayConfig{
+		Host:     "127.0.0.1",
+		Port:     ln.Addr().(*net.TCPAddr).Port,
+		Username: "relay-user",
+		Password: "relay-pass",
+		StartTLS: false,
+	}
+
+	// The recipient domain does not even exist — with a relay configured,
+	// no MX lookup happens and the relay still receives the message.
+	input := []byte("From: a@lmve.net\r\nTo: b@bogus-domain.invalid\r\nSubject: relay\r\n\r\nbody\r\n")
+	resp, err := m.Deliver("a@lmve.net", "b@bogus-domain.invalid", input)
+	if err != nil {
+		t.Fatalf("Deliver via relay: %v", err)
+	}
+	if !strings.HasPrefix(resp, "250") {
+		t.Fatalf("unexpected relay response: %q", resp)
+	}
+
+	res := <-ch
+	if res.authLine == "" {
+		t.Fatal("relay did not receive AUTH PLAIN")
+	}
+	wantAuth := "AUTH PLAIN " + base64.StdEncoding.EncodeToString([]byte("\x00relay-user\x00relay-pass"))
+	if res.authLine != wantAuth {
+		t.Fatalf("auth line mismatch: got %q want %q", res.authLine, wantAuth)
+	}
+	if string(res.gotData) != string(input) {
+		t.Fatalf("relay data mismatch.\ngot:  %q\nwant: %q", res.gotData, input)
+	}
 }

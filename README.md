@@ -117,6 +117,11 @@ max_recipients = 50                      # 单封邮件最大外部收件人数
 max_per_min = 30                         # 每用户每分钟最大外发数
 max_per_day = 500                        # 每用户每日最大外发数，0 表示禁用外部投递
 connect_timeout = 30                     # 连接远程 MX 超时（秒）
+relay_host = ""                          # 智能主机（smarthost），留空则直投 MX
+relay_port = 587                         # 465 = 隐式 TLS，其他端口按需 STARTTLS
+relay_user = ""                          # 中继认证用户名（AUTH PLAIN）
+relay_password = ""                      # 中继认证密码
+relay_starttls = true                    # 非 465 端口是否使用 STARTTLS
 ```
 
 ---
@@ -257,6 +262,24 @@ max_per_day = 500             # 设为 0 可完全禁用外部投递
 安全策略：外部收件人仅接受已认证用户；`MAIL FROM` 必须与登录用户一致；
 每用户每分钟/每日外发数受限；失败邮件会退信到发件人收件箱；
 管理员可在后台「外发队列」查看投递状态、手动重试或取消。
+
+### 7. 通过智能主机（smarthost）中继外发
+
+服务器 IP 属于家庭宽带/动态 IP 段时，常被 Spamhaus PBL 等策略列表收录，
+Microsoft（Outlook/Hotmail）等收件方会直接拒收。此时建议把外发邮件交给
+第三方 SMTP 中继（Mailgun / SendGrid / Amazon SES / 阿里云邮件推送等），
+在 `[outbound]` 中配置即可，所有外部投递自动改走中继：
+
+```toml
+[outbound]
+relay_host = "smtp.example-relay.com"
+relay_port = 587          # 465 为隐式 TLS
+relay_user = "your-api-user"
+relay_password = "your-api-key"
+relay_starttls = true
+```
+
+中继使用 AUTH PLAIN 认证；本地收件人仍走本地投递，不受影响。
 
 ---
 
