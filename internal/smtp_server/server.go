@@ -285,7 +285,14 @@ type parsedSMTPMessage struct {
 	textBody    string
 	htmlBody    string
 	date        time.Time
-	attachments []*db.Attachment
+	attachments []*parsedAttachment
+}
+
+// parsedAttachment holds an extracted MIME attachment part.
+type parsedAttachment struct {
+	fileName    string
+	contentType string
+	data        []byte
 }
 
 func parseSMTPMessage(data []byte) (*parsedSMTPMessage, error) {
@@ -346,10 +353,10 @@ func parseSMTPMessage(data []byte) (*parsedSMTPMessage, error) {
 				log.Printf("SMTP: error reading attachment part: %v", readErr)
 				continue
 			}
-			msg.attachments = append(msg.attachments, &db.Attachment{
-				FileName:    filename,
-				ContentType: contentType,
-				FileSize:    int64(len(buf)),
+			msg.attachments = append(msg.attachments, &parsedAttachment{
+				fileName:    filename,
+				contentType: contentType,
+				data:        buf,
 			})
 		}
 	}
@@ -376,7 +383,32 @@ func (s *smtpSession) saveMessage(userID uint, folder string, parsed *parsedSMTP
 		IsFlagged: false,
 		Date:      parsed.date,
 	}
-	return s.backend.server.stores.Mails.Create(msg)
+	if err := s.backend.server.stores.Mails.Create(msg); err != nil {
+		return err
+	}
+
+	// Persist attachments to disk and link them to the message so that the
+	// Web mail UI can list/download them and quota accounting stays correct.
+	for _, att := range parsed.attachments {
+		relPath, err := s.backend.server.storage.Save(att.fileName, att.data)
+		if err != nil {
+			log.Printf("SMTP: failed to save attachment %s: %v", att.fileName, err)
+			continue
+		}
+		rec := &db.Attachment{
+			MessageID:   msg.ID,
+			FileName:    att.fileName,
+			FilePath:    relPath,
+			ContentType: att.contentType,
+			FileSize:    int64(len(att.data)),
+		}
+		if err := s.backend.server.stores.Attachments.Create(rec); err != nil {
+			log.Printf("SMTP: failed to create attachment record: %v", err)
+			continue
+		}
+		_ = s.backend.server.stores.Users.UpdateUsedBytes(userID, rec.FileSize)
+	}
+	return nil
 }
 
 // Reset clears the session state for the next message on the same connection.
