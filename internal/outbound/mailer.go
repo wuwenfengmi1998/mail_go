@@ -61,6 +61,8 @@ type Mailer struct {
 	Hostname       string // EHLO hostname presented to remote servers
 	Port           int    // destination port, 0 means the default SMTP port 25
 	Relay          *RelayConfig
+	IPFamily       string // "ipv4" (default), "ipv6" or "auto"
+	SourceIP       string // optional source address to bind (e.g. a static IPv6)
 	ConnectTimeout time.Duration
 }
 
@@ -95,7 +97,7 @@ func (m *Mailer) Deliver(from, to string, data []byte) (string, error) {
 	}
 	domain := strings.ToLower(strings.TrimSpace(to[at+1:]))
 
-	mxHosts, err := lookupMX(domain)
+	mxHosts, err := lookupMX(domain, m.IPFamily)
 	if err != nil {
 		var de *DeliveryError
 		if errors.As(err, &de) {
@@ -250,7 +252,7 @@ func (m *Mailer) smtpTransaction(host string, port int, implicitTLS, startTLS bo
 	ctx, cancel := context.WithTimeout(context.Background(), m.ConnectTimeout)
 	defer cancel()
 
-	conn, err := dialSMTP(ctx, addr, m.ConnectTimeout)
+	conn, err := m.dialSMTP(ctx, addr)
 	if err != nil {
 		return "", newTempError("connect to %s failed: %v", addr, err)
 	}
@@ -363,23 +365,43 @@ func tlsClientHandshake(ctx context.Context, conn net.Conn, serverName, host str
 	return tlsConn, nil
 }
 
-// dialSMTP connects to a remote SMTP server preferring IPv4.
-// Many receiving systems (e.g. Gmail) reject mail from IPv6 addresses
-// without PTR records; the IPv4 address of a mail host usually has a
-// forward-confirmed PTR and a matching SPF entry, so IPv4 is preferred.
-// A literal IPv6 destination is still reachable via tcp6.
-func dialSMTP(ctx context.Context, addr string, timeout time.Duration) (net.Conn, error) {
+// dialSMTP connects to a remote SMTP server, honoring the configured IP
+// family and optional source address binding.
+//
+// The default is IPv4-only: many receiving systems (e.g. Gmail) reject mail
+// from IPv6 addresses without PTR records, and the IPv4 address of a mail
+// host usually has a forward-confirmed PTR and a matching SPF entry. Switch
+// IPFamily to "ipv6"/"auto" after the ISP has configured a PTR for the
+// source address and SourceIP binds the connection to that static address.
+func (m *Mailer) dialSMTP(ctx context.Context, addr string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, err
 	}
 
 	network := "tcp4"
-	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
-		network = "tcp6"
+	if ip := net.ParseIP(host); ip != nil {
+		// Literal destination: pick the matching family.
+		if ip.To4() == nil {
+			network = "tcp6"
+		}
+	} else {
+		switch strings.ToLower(m.IPFamily) {
+		case "ipv6":
+			network = "tcp6"
+		case "auto":
+			network = "tcp"
+		default: // "ipv4" and anything unrecognized
+			network = "tcp4"
+		}
 	}
 
-	dialer := &net.Dialer{Timeout: timeout}
+	dialer := &net.Dialer{Timeout: m.ConnectTimeout}
+	if m.SourceIP != "" {
+		if ip := net.ParseIP(m.SourceIP); ip != nil {
+			dialer.LocalAddr = &net.TCPAddr{IP: ip}
+		}
+	}
 	return dialer.DialContext(ctx, network, net.JoinHostPort(host, port))
 }
 
@@ -395,8 +417,9 @@ func is8Bit(data []byte) bool {
 
 // lookupMX resolves the MX hosts for a domain, sorted by preference.
 // Per RFC 5321 section 5.1, when no MX record exists the domain itself is
-// used as an implicit MX with preference 0.
-func lookupMX(domain string) ([]string, error) {
+// used as an implicit MX with preference 0. ipFamily controls the ordering
+// of the A/AAAA fallback ("ipv6" puts IPv6 first, otherwise IPv4 first).
+func lookupMX(domain, ipFamily string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -410,8 +433,7 @@ func lookupMX(domain string) ([]string, error) {
 	}
 
 	if len(mxs) == 0 {
-		// Implicit MX: fall back to the domain's A/AAAA records,
-		// preferring IPv4 (see dialSMTP for the rationale).
+		// Implicit MX: fall back to the domain's A/AAAA records.
 		ips, err := net.DefaultResolver.LookupIPAddr(ctx, domain)
 		if err != nil {
 			return nil, err
@@ -425,7 +447,11 @@ func lookupMX(domain string) ([]string, error) {
 				v6 = append(v6, ip.IP.String())
 			}
 		}
-		hosts = append(hosts, v6...)
+		if strings.EqualFold(ipFamily, "ipv6") {
+			hosts = append(v6, hosts...)
+		} else {
+			hosts = append(hosts, v6...)
+		}
 		if len(hosts) == 0 {
 			return nil, fmt.Errorf("no MX or A records for %s", domain)
 		}

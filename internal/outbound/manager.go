@@ -56,6 +56,11 @@ func NewManager(cfg config.OutboundConfig, hostname string, stores *store.Stores
 		lim:      make(map[uint]*userWindow),
 		batch:    50,
 	}
+	m.mailer.IPFamily = cfg.IPFamily
+	m.mailer.SourceIP = cfg.SourceIP
+	if cfg.SourceIP != "" {
+		log.Printf("outbound: binding source address %s (ip_family=%s)", cfg.SourceIP, cfg.IPFamily)
+	}
 
 	if cfg.RelayHost != "" {
 		m.mailer.Relay = &RelayConfig{

@@ -122,6 +122,8 @@ relay_port = 587                         # 465 = 隐式 TLS，其他端口按需
 relay_user = ""                          # 中继认证用户名（AUTH PLAIN）
 relay_password = ""                      # 中继认证密码
 relay_starttls = true                    # 非 465 端口是否使用 STARTTLS
+ip_family = "ipv4"                       # 出站地址族：ipv4（默认）| ipv6 | auto
+source_ip = ""                           # 出站源地址绑定（如静态 IPv6 地址），留空由内核选择
 ```
 
 ---
@@ -262,6 +264,12 @@ max_per_day = 500             # 设为 0 可完全禁用外部投递
 安全策略：外部收件人仅接受已认证用户；`MAIL FROM` 必须与登录用户一致；
 每用户每分钟/每日外发数受限；失败邮件会退信到发件人收件箱；
 管理员可在后台「外发队列」查看投递状态、手动重试或取消。
+
+> **IPv4/IPv6**：默认仅使用 IPv4 出站（`ip_family = "ipv4"`），因为很多收件方
+> （如 Gmail）会拒收没有 PTR 的 IPv6 地址，而 IPv4 通常具备正反向一致的 PTR。
+> 如需走 IPv6：请运营商为静态地址配置 PTR（指向 `mail.example.com`），
+> 然后设置 `ip_family = "ipv6"` 并把 `source_ip` 绑定到该静态地址
+> （避免内核使用轮换的临时隐私地址）。
 
 ### 7. 通过智能主机（smarthost）中继外发
 

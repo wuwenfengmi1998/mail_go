@@ -98,6 +98,10 @@ type OutboundConfig struct {
 	RelayUser     string `toml:"relay_user"`     // 中继认证用户名（AUTH PLAIN）
 	RelayPassword string `toml:"relay_password"` // 中继认证密码
 	RelayStartTLS bool   `toml:"relay_starttls"` // 非 465 端口是否使用 STARTTLS
+
+	// IP family and source address binding for outbound connections.
+	IPFamily string `toml:"ip_family"` // ipv4（默认，PTR/SPF 最可靠）| ipv6 | auto
+	SourceIP string `toml:"source_ip"` // 出站源地址绑定（如静态 IPv6），留空由内核选择
 }
 
 // Config is the top-level configuration structure.
@@ -190,6 +194,7 @@ func defaultConfig() *Config {
 			ConnectTimeout: 30,  // 连接远程 MX 超时 30 秒
 			RelayPort:      587, // smarthost 默认提交端口
 			RelayStartTLS:  true,
+			IPFamily:       "ipv4",
 		},
 	}
 }
@@ -274,6 +279,9 @@ func mergeDefaults(cfg *Config, defaults *Config) *Config {
 	}
 	if cfg.Outbound.RelayPort == 0 {
 		cfg.Outbound.RelayPort = defaults.Outbound.RelayPort
+	}
+	if cfg.Outbound.IPFamily == "" {
+		cfg.Outbound.IPFamily = defaults.Outbound.IPFamily
 	}
 	return cfg
 }
