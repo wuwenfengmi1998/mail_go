@@ -327,7 +327,7 @@ func LoadConfig() (*Config, error) {
 
 	// relay_starttls defaults to true for safety; the raw file is checked
 	// because TOML decoding cannot distinguish an absent bool from false.
-	if cfg.Outbound.RelayHost != "" && !strings.Contains(string(data), "relay_starttls") {
+	if !strings.Contains(string(data), "relay_starttls") {
 		cfg.Outbound.RelayStartTLS = defaults.Outbound.RelayStartTLS
 	}
 
