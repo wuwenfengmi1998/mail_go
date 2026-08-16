@@ -13,6 +13,7 @@ type Stores struct {
 	Domains     DomainStore
 	Attachments AttachmentStore
 	Bans        BanStore
+	Outbound    OutboundStore
 }
 
 // NewStores creates a new Stores instance with all GORM-backed implementations.
@@ -23,6 +24,7 @@ func NewStores(database *gorm.DB) *Stores {
 		Domains:     newDomainStore(database),
 		Attachments: newAttachmentStore(database),
 		Bans:        newBanStore(database),
+		Outbound:    newOutboundStore(database),
 	}
 }
 

@@ -48,27 +48,61 @@ func (Domain) TableName() string {
 
 // Message represents an email message in the system.
 type Message struct {
-	ID         uint      `gorm:"primaryKey" json:"id"`
-	UserID     uint      `gorm:"index;not null" json:"user_id"`
-	User       User      `gorm:"foreignKey:UserID" json:"user"`
-	MessageID  string    `gorm:"size:255;index" json:"message_id"`
-	Folder     string    `gorm:"size:64;default:INBOX;index" json:"folder"`
-	FromAddr   string    `gorm:"size:512;not null" json:"from_addr"`
-	ToAddr     string    `gorm:"size:2048;not null" json:"to_addr"`
-	CcAddr     string    `gorm:"size:2048" json:"cc_addr"`
-	Subject    string    `gorm:"size:1024" json:"subject"`
-	TextBody   string    `gorm:"type:text" json:"text_body"`
-	HtmlBody   string    `gorm:"type:text" json:"html_body"`
-	RawData    string    `gorm:"type:mediumtext" json:"raw_data"`
-	IsRead     bool      `gorm:"default:false" json:"is_read"`
-	IsFlagged  bool      `gorm:"default:false" json:"is_flagged"`
-	Date       time.Time `json:"date"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	UserID    uint      `gorm:"index;not null" json:"user_id"`
+	User      User      `gorm:"foreignKey:UserID" json:"user"`
+	MessageID string    `gorm:"size:255;index" json:"message_id"`
+	Folder    string    `gorm:"size:64;default:INBOX;index" json:"folder"`
+	FromAddr  string    `gorm:"size:512;not null" json:"from_addr"`
+	ToAddr    string    `gorm:"size:2048;not null" json:"to_addr"`
+	CcAddr    string    `gorm:"size:2048" json:"cc_addr"`
+	Subject   string    `gorm:"size:1024" json:"subject"`
+	TextBody  string    `gorm:"type:text" json:"text_body"`
+	HtmlBody  string    `gorm:"type:text" json:"html_body"`
+	RawData   string    `gorm:"type:mediumtext" json:"raw_data"`
+	IsRead    bool      `gorm:"default:false" json:"is_read"`
+	IsFlagged bool      `gorm:"default:false" json:"is_flagged"`
+	Date      time.Time `json:"date"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // TableName specifies the table name for Message.
 func (Message) TableName() string {
 	return "messages"
+}
+
+// Outbound message delivery statuses.
+const (
+	OutboundStatusPending  = "pending"  // 等待发送
+	OutboundStatusSending  = "sending"  // 发送中
+	OutboundStatusSent     = "sent"     // 已送达
+	OutboundStatusDeferred = "deferred" // 临时失败，等待重试
+	OutboundStatusFailed   = "failed"   // 永久失败/超过重试上限
+	OutboundStatusCanceled = "canceled" // 管理员取消
+)
+
+// OutboundMessage represents a message queued for delivery to an external domain.
+type OutboundMessage struct {
+	ID            uint       `gorm:"primaryKey" json:"id"`
+	MessageID     string     `gorm:"size:255;index" json:"message_id"`
+	UserID        uint       `gorm:"index" json:"user_id"` // 发件用户 ID（Web/SMTP 提交用户）
+	FromAddr      string     `gorm:"size:512;not null" json:"from_addr"`
+	ToAddr        string     `gorm:"size:512;not null" json:"to_addr"`
+	RecipientDom  string     `gorm:"size:255;index" json:"recipient_dom"`
+	RawData       string     `gorm:"type:mediumtext" json:"-"` // DKIM 签名后的完整邮件
+	Status        string     `gorm:"size:32;default:pending;index" json:"status"`
+	Attempts      int        `gorm:"default:0" json:"attempts"`
+	NextAttemptAt time.Time  `gorm:"index" json:"next_attempt_at"`
+	LastResponse  string     `gorm:"size:1024" json:"last_response"`
+	LastError     string     `gorm:"size:1024" json:"last_error"`
+	CompletedAt   *time.Time `json:"completed_at"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+}
+
+// TableName specifies the table name for OutboundMessage.
+func (OutboundMessage) TableName() string {
+	return "outbound_messages"
 }
 
 // BanEntry represents an IP address that has been banned due to excessive login failures.

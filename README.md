@@ -5,10 +5,11 @@ Go 语言编写的轻量级邮件系统，集成 SMTP / IMAP / POP3 协议服务
 ## 功能特性
 
 - **邮件协议**：SMTP（发送）、IMAP（同步）、POP3（收取），均支持 TLS 加密
+- **外部投递**：认证用户可向外部邮箱（QQ/Gmail/Outlook 等）发送邮件，内置外发队列、MX 直投、STARTTLS、指数退避重试、退信通知与 DKIM 签名
 - **Web 邮箱**：收件箱、已发送、草稿箱、富文本编辑（Quill.js）、附件上传/下载
-- **管理后台**：域名管理、用户管理、DKIM 密钥自动生成、DNS 配置提示、全量邮件查看、IP 封禁管理、仪表盘统计
+- **管理后台**：域名管理、用户管理、DKIM 密钥自动生成、DNS 配置提示、全量邮件查看、外发队列管理、IP 封禁管理、仪表盘统计
 - **外部认证**：OAuth2（Google / GitHub）、LDAP（可选，默认关闭）
-- **安全机制**：BCrypt 密码哈希、登录失败自动封禁 IP、管理员可解封
+- **安全机制**：BCrypt 密码哈希、登录失败自动封禁 IP、外发频率限制（防滥用）、非认证禁止中继（防开放中继）、管理员可解封
 - **多数据库**：默认 SQLite，可切换 MySQL
 - **跨平台**：Linux 生产部署 + Windows 本地调试
 
@@ -106,6 +107,16 @@ ldap_use_tls = false
 [ban]
 max_fail_attempts = 5                    # 登录失败次数阈值
 ban_duration_min = 30                     # 封禁时长（分钟）
+
+[outbound]
+hostname = ""                            # EHLO 主机名，留空使用 [smtp] domain
+poll_interval = 15                       # 外发队列扫描间隔（秒）
+max_attempts = 12                        # 单封邮件最大投递尝试次数
+retry_base_min = 5                       # 重试退避基数（分钟），指数增长：5/10/20/40...
+max_recipients = 50                      # 单封邮件最大外部收件人数
+max_per_min = 30                         # 每用户每分钟最大外发数
+max_per_day = 500                        # 每用户每日最大外发数，0 表示禁用外部投递
+connect_timeout = 30                     # 连接远程 MX 超时（秒）
 ```
 
 ---
@@ -215,6 +226,38 @@ ldap_search_filter = "(uid=%s)"
 ldap_use_tls = true
 ```
 
+### 6. 对外发送邮件（外部投递）
+
+认证用户（Web 邮箱 / SMTP 提交）可以向外部邮箱地址发送邮件。系统通过
+收件人域名的 MX 记录直投，自动处理 STARTTLS、指数退避重试，并为外发
+邮件添加 DKIM 签名（使用后台域名管理中生成的密钥）。
+
+```toml
+[smtp]
+domain = "example.com"        # 必须设置为真实的邮件域名（EHLO/退信地址）
+
+[outbound]
+hostname = "mail.example.com" # 建议与邮件主机名一致
+poll_interval = 15
+max_attempts = 12
+max_per_day = 500             # 设为 0 可完全禁用外部投递
+```
+
+需要满足的 DNS / 服务器条件（详见 `todo.md` 与后台 DNS 提示页）：
+
+| 项目 | 说明 |
+|------|------|
+| MX | `example.com MX 10 mail.example.com` |
+| SPF | `example.com TXT "v=spf1 mx -all"` |
+| DKIM | `default._domainkey.example.com TXT "v=DKIM1; k=rsa; p=<公钥>"`（后台自动生成） |
+| DMARC | `_dmarc.example.com TXT "v=DMARC1; p=none; rua=mailto:postmaster@example.com"` |
+| PTR | 服务器 IP 反向解析指向邮件主机名（需向机房申请） |
+| 网络 | 服务器 25 端口出站未被云厂商封锁 |
+
+安全策略：外部收件人仅接受已认证用户；`MAIL FROM` 必须与登录用户一致；
+每用户每分钟/每日外发数受限；失败邮件会退信到发件人收件箱；
+管理员可在后台「外发队列」查看投递状态、手动重试或取消。
+
 ---
 
 ## 端口速查
@@ -246,8 +289,13 @@ mailgo/
 │   │   ├── mail_store.go            # 邮件数据操作
 │   │   ├── domain_store.go          # 域名数据操作
 │   │   ├── attachment_store.go      # 附件数据操作
+│   │   ├── outbound_store.go        # 外发队列数据操作
 │   │   └── ban_store.go             # 封禁数据操作
 │   ├── smtp_server/server.go        # SMTP 服务
+│   ├── outbound/
+│   │   ├── mailer.go               # MX 查询与 SMTP 出站客户端
+│   │   ├── manager.go              # 外发队列、重试、限速、退信
+│   │   └── sign.go                 # DKIM 签名
 │   ├── imap_server/
 │   │   ├── server.go                # IMAP 服务
 │   │   └── backend.go               # IMAP 后端

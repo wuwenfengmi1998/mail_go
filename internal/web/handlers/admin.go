@@ -13,6 +13,7 @@ import (
 
 	"mail_go/internal/db"
 	"mail_go/internal/dkim"
+	"mail_go/internal/outbound"
 	"mail_go/internal/storage"
 	"mail_go/internal/store"
 
@@ -22,14 +23,16 @@ import (
 
 // AdminHandler handles admin-related routes (dashboard, domain/user management).
 type AdminHandler struct {
-	stores  *store.Stores
-	storage *storage.AttachmentStorage
-	tlsDir  string
+	stores   *store.Stores
+	storage  *storage.AttachmentStorage
+	tlsDir   string
+	outbound *outbound.Manager
 }
 
-// NewAdminHandler creates a new AdminHandler with the given stores and attachment storage.
-func NewAdminHandler(stores *store.Stores, attStorage *storage.AttachmentStorage, tlsDir string) *AdminHandler {
-	return &AdminHandler{stores: stores, storage: attStorage, tlsDir: tlsDir}
+// NewAdminHandler creates a new AdminHandler with the given stores, attachment
+// storage, TLS directory and outbound delivery manager.
+func NewAdminHandler(stores *store.Stores, attStorage *storage.AttachmentStorage, tlsDir string, ob *outbound.Manager) *AdminHandler {
+	return &AdminHandler{stores: stores, storage: attStorage, tlsDir: tlsDir, outbound: ob}
 }
 
 // Dashboard renders the admin dashboard with summary statistics.
@@ -759,6 +762,93 @@ func (h *AdminHandler) AdminDownloadAttachment(c *gin.Context) {
 
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", att.FileName))
 	c.Data(http.StatusOK, att.ContentType, data)
+}
+
+// ListOutbound renders the outbound delivery queue page.
+func (h *AdminHandler) ListOutbound(c *gin.Context) {
+	page := getPageParam(c, "page", 1)
+	status := c.Query("status")
+
+	items, total, err := h.stores.Outbound.List(page, 20, status)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "加载外发队列失败: %v", err)
+		return
+	}
+
+	// Queue statistics for the summary cards.
+	statCounts := make(map[string]int64)
+	for _, s := range []string{
+		db.OutboundStatusPending,
+		db.OutboundStatusDeferred,
+		db.OutboundStatusSent,
+		db.OutboundStatusFailed,
+	} {
+		n, _ := h.stores.Outbound.CountByStatus(s)
+		statCounts[s] = n
+	}
+
+	totalPages := int(total) / 20
+	if int(total)%20 > 0 {
+		totalPages++
+	}
+	if totalPages < 1 {
+		totalPages = 0
+	}
+
+	currentUser, _ := c.Get("currentUser")
+
+	c.HTML(200, "admin_outbound", gin.H{
+		"currentUser":  currentUser,
+		"items":        items,
+		"total":        total,
+		"page":         page,
+		"pageSize":     20,
+		"totalPages":   totalPages,
+		"status":       status,
+		"statCounts":   statCounts,
+		"statusText":   outbound.StatusText,
+		"activeFolder": "outbound",
+	})
+}
+
+// RetryOutbound resets an outbound queue item for immediate redelivery.
+func (h *AdminHandler) RetryOutbound(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.String(http.StatusBadRequest, "无效的队列ID")
+		return
+	}
+
+	if h.outbound == nil {
+		c.String(http.StatusInternalServerError, "外发服务不可用")
+		return
+	}
+	if err := h.outbound.Retry(uint(id)); err != nil {
+		c.String(http.StatusInternalServerError, "重试失败: %v", err)
+		return
+	}
+
+	c.Redirect(http.StatusFound, "/admin/outbound")
+}
+
+// CancelOutbound cancels a queued outbound message.
+func (h *AdminHandler) CancelOutbound(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.String(http.StatusBadRequest, "无效的队列ID")
+		return
+	}
+
+	if h.outbound == nil {
+		c.String(http.StatusInternalServerError, "外发服务不可用")
+		return
+	}
+	if err := h.outbound.Cancel(uint(id)); err != nil {
+		c.String(http.StatusInternalServerError, "取消失败: %v", err)
+		return
+	}
+
+	c.Redirect(http.StatusFound, "/admin/outbound")
 }
 
 // formIntOrDefault extracts an integer from a form field, returning the default if missing/invalid.

@@ -17,6 +17,7 @@ import (
 	"mail_go/config"
 	"mail_go/internal/db"
 	"mail_go/internal/imap_server"
+	"mail_go/internal/outbound"
 	"mail_go/internal/pop3_server"
 	"mail_go/internal/smtp_server"
 	"mail_go/internal/storage"
@@ -170,8 +171,17 @@ func main() {
 	applyDomainTLSConfig(stores, cfg)
 	ensureSelfSignedTLSConfig(cfg)
 
-	// 6. Start SMTP server
-	smtpSrv := smtp_server.NewSMTPServer(cfg.SMTP, stores, attStorage)
+	// 6. Outbound delivery manager (external mail queue + worker)
+	outboundMgr := outbound.NewManager(cfg.Outbound, cfg.SMTP.Domain, stores)
+	if outboundMgr.Enabled() {
+		outboundMgr.Start()
+		fmt.Println("外发邮件投递服务已启动")
+	} else {
+		fmt.Println("外发邮件投递未启用（outbound.max_per_day = 0）")
+	}
+
+	// 7. Start SMTP server
+	smtpSrv := smtp_server.NewSMTPServer(cfg.SMTP, stores, attStorage, outboundMgr)
 	go func() {
 		if err := smtpSrv.Start(); err != nil {
 			log.Printf("SMTP 服务启动失败: %v", err)
@@ -223,8 +233,8 @@ func main() {
 		}()
 	}
 
-	// 9. Start Web server
-	webServer := web.NewWebServer(cfg.Web, stores, attStorage, cfg.Storage, cfg.Auth, cfg.Ban)
+	// 10. Start Web server
+	webServer := web.NewWebServer(cfg.Web, stores, attStorage, cfg.Storage, cfg.Auth, cfg.Ban, outboundMgr)
 	fmt.Printf("Web 服务启动在 %s\n", cfg.Web.Addr)
 	go func() {
 		if err := webServer.Start(); err != nil {
