@@ -214,6 +214,20 @@ do_install() {
     # 4. 拉取代码并编译
     build_binary
 
+    # 4.5 配置 Caddy 证书同步（若检测到 Caddy），供后台一键导入使用
+    local caddy_data
+    caddy_data="$(find_caddy_data_dir 2>/dev/null || true)"
+    if [[ -n "${caddy_data}" ]]; then
+        info "检测到 Caddy（${caddy_data}），配置证书同步任务 ..."
+        if install_caddy_sync "${caddy_data}"; then
+            ok "Caddy 证书同步已配置（后台可一键导入证书）"
+        else
+            warn "Caddy 证书同步配置失败，可稍后手动执行: sudo $0 setup-caddy-cert"
+        fi
+        # ACL 兜底（失败不影响使用）
+        command -v setfacl &>/dev/null && setup_caddy_acls "${caddy_data}" || true
+    fi
+
     # 5. 部署文件
     deploy_files
 
@@ -248,6 +262,153 @@ do_install() {
     echo ""
     echo "  默认管理员: admin@example.com / admin"
     warn "⚠ 请登录后立即修改默认密码！"
+}
+
+# ======================== Caddy 证书同步 ========================
+# mail_go 后台有一键“从 Caddy 获取证书”功能：从 Caddy 的证书存储读取
+# 域名证书与私钥并导入邮件服务。Caddy 证书目录默认仅 caddy 用户可读
+# （0700/0600），且证书续期后文件会被替换（权限重置），因此安装一个
+# root 权限的 systemd path/timer 同步任务，把 Caddy 证书树镜像到
+# mail_go 可读的 <storage>/tls/caddy 目录，续期后自动更新；
+# 同时授予 ACL 作为直接读取的兜底。用法: sudo ./install.sh setup-caddy-cert [caddy数据目录]
+
+# 探测 Caddy 数据目录（包含 certificates/ 子目录的那个目录）
+find_caddy_data_dir() {
+    local candidates=(
+        "/var/lib/caddy/.local/share/caddy"
+        "/root/.local/share/caddy"
+        "/home/caddy/.local/share/caddy"
+    )
+    local d
+    for d in "${candidates[@]}"; do
+        if [[ -d "${d}/certificates" ]]; then
+            echo "${d}"
+            return 0
+        fi
+    done
+    # systemd 服务可能配置了自定义 HOME
+    local home
+    home=$(systemctl show caddy -p Environment --value 2>/dev/null | grep -oP '(?<=HOME=)[^ ]+' || true)
+    if [[ -n "${home}" && -d "${home}/.local/share/caddy/certificates" ]]; then
+        echo "${home}/.local/share/caddy"
+        return 0
+    fi
+    return 1
+}
+
+# 用 ACL 授予 mail_go 用户读取 Caddy 证书的权限（幂等，兜底用：
+# 续期后 caddy 以 0600 重建文件，ACL 可能失效，靠同步任务保障）
+setup_caddy_acls() {
+    local data_dir="${1:-$(find_caddy_data_dir 2>/dev/null || true)}"
+    [[ -n "${data_dir}" ]] || return 1
+    local certs_dir="${data_dir}/certificates"
+    [[ -d "${certs_dir}" ]] || return 1
+
+    command -v setfacl &>/dev/null || return 1
+
+    # 各级父目录需要 x（遍历）权限
+    local p="${data_dir}"
+    while [[ "${p}" != "/" ]]; do
+        setfacl -m "u:${SERVICE_USER}:x" "${p}" 2>/dev/null
+        p="$(dirname "${p}")"
+    done
+    setfacl -R -m "u:${SERVICE_USER}:rX" "${certs_dir}" 2>/dev/null
+    setfacl -R -m "d:u:${SERVICE_USER}:rX" "${certs_dir}" 2>/dev/null
+    return 0
+}
+
+# 安装证书同步脚本 + systemd path/timer 单元，并立即同步一次
+install_caddy_sync() {
+    local data_dir="$1"
+    local sync_script="/usr/local/sbin/mailgo-caddy-cert-sync.sh"
+    local sync_dir="${DATA_DIR}/tls/caddy"
+    local certs_dir="${data_dir}/certificates"
+
+    # 同步脚本（把数据目录固化进去）
+    cat > "${sync_script}" <<EOF
+#!/usr/bin/env bash
+# MailGo - 将 Caddy 证书存储镜像到 mail_go 可读目录（root 运行，
+# 由 mailgo-caddy-sync.{path,timer} 触发），供后台一键导入使用。
+set -euo pipefail
+SRC="${certs_dir}"
+SYNC="${sync_dir}"
+[[ -d "\${SRC}" ]] || exit 0
+mkdir -p "\${SYNC}"
+rm -rf "\${SYNC}/.certs.tmp"
+cp -a "\${SRC}" "\${SYNC}/.certs.tmp"
+chown -R "${SERVICE_USER}:${SERVICE_USER}" "\${SYNC}/.certs.tmp"
+chmod -R u+rwX,go-rwx "\${SYNC}/.certs.tmp"
+rm -rf "\${SYNC}/certificates"
+mv "\${SYNC}/.certs.tmp" "\${SYNC}/certificates"
+EOF
+    chmod 700 "${sync_script}"
+
+    cat > /etc/systemd/system/mailgo-caddy-sync.service <<EOF
+[Unit]
+Description=MailGo - 同步 Caddy 证书到 mail_go TLS 目录
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=${sync_script}
+EOF
+
+    cat > /etc/systemd/system/mailgo-caddy-sync.path <<EOF
+[Unit]
+Description=MailGo - 监视 Caddy 证书目录变化并触发同步
+
+[Path]
+PathChanged=${certs_dir}
+PathChanged=${certs_dir}/*/*
+Unit=mailgo-caddy-sync.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    cat > /etc/systemd/system/mailgo-caddy-sync.timer <<EOF
+[Unit]
+Description=MailGo - 定期同步 Caddy 证书（开机 + 每日兜底）
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1d
+Unit=mailgo-caddy-sync.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now mailgo-caddy-sync.path mailgo-caddy-sync.timer >/dev/null
+    systemctl start mailgo-caddy-sync.service
+    return 0
+}
+
+do_setup_caddy_cert() {
+    check_root
+    local data_dir="${2:-}"
+    if [[ -z "${data_dir}" ]]; then
+        data_dir="$(find_caddy_data_dir || true)"
+        if [[ -z "${data_dir}" ]]; then
+            error "未检测到 Caddy 数据目录（/var/lib/caddy 等），请手动指定: sudo $0 setup-caddy-cert <caddy数据目录>"
+        fi
+        info "检测到 Caddy 数据目录: ${data_dir}"
+    elif [[ ! -d "${data_dir}/certificates" ]]; then
+        error "目录 ${data_dir} 下未找到 certificates/ 子目录，请确认传入的是 Caddy 数据目录"
+    fi
+
+    info "安装证书同步任务（systemd path + timer，续期后自动同步）..."
+    install_caddy_sync "${data_dir}"
+    ok "证书同步任务已安装并完成首次同步"
+
+    if command -v setfacl &>/dev/null && setup_caddy_acls "${data_dir}"; then
+        ok "已授予 ${SERVICE_USER} 用户直接读取 Caddy 证书的 ACL 权限（兜底）"
+    else
+        warn "未配置 ACL 兜底（不影响使用，同步镜像始终可读）"
+    fi
+
+    ok "现在可在管理后台“编辑域名”页点击“从 Caddy 获取证书”一键导入"
 }
 
 # ======================== 卸载 ========================
@@ -352,21 +513,24 @@ do_status() {
 
 # ======================== 入口 ========================
 case "${1:-}" in
-    install)   do_install   ;;
-    uninstall) do_uninstall ;;
-    start)     do_start     ;;
-    stop)      do_stop      ;;
-    restart)   do_restart   ;;
-    status)    do_status    ;;
+    install)           do_install           ;;
+    uninstall)         do_uninstall         ;;
+    start)             do_start             ;;
+    stop)              do_stop              ;;
+    restart)           do_restart           ;;
+    status)            do_status            ;;
+    setup-caddy-cert)  do_setup_caddy_cert  ;;
     *)
-        echo "用法: sudo $0 {install|uninstall|start|stop|restart|status}"
+        echo "用法: sudo $0 {install|uninstall|start|stop|restart|status|setup-caddy-cert}"
         echo ""
-        echo "  install   — 完整安装/更新（拉代码+编译+部署+启动+开机自启）"
-        echo "  uninstall — 卸载服务（可选保留数据）"
-        echo "  start     — 启动服务"
-        echo "  stop      — 停止服务"
-        echo "  restart   — 重启服务"
-        echo "  status    — 查看服务状态"
+        echo "  install          — 完整安装/更新（拉代码+编译+部署+启动+开机自启）"
+        echo "  uninstall        — 卸载服务（可选保留数据）"
+        echo "  start            — 启动服务"
+        echo "  stop             — 停止服务"
+        echo "  restart          — 重启服务"
+        echo "  status           — 查看服务状态"
+        echo "  setup-caddy-cert — 授予 mail_go 读取本机 Caddy 证书的 ACL 权限"
+        echo "                     （后台“从 Caddy 获取证书”按钮的前置条件）"
         exit 1
         ;;
 esac

@@ -108,6 +108,11 @@ ldap_use_tls = false
 max_fail_attempts = 5                    # 登录失败次数阈值
 ban_duration_min = 30                     # 封禁时长（分钟）
 
+[caddy]
+data_dir = ""                             # Caddy 数据目录（含 certificates/ 的那个），
+                                          # 供后台一键导入证书；留空自动探测
+                                          # /var/lib/caddy/.local/share/caddy 等常见位置
+
 [outbound]
 hostname = ""                            # EHLO 主机名，留空使用 [smtp] domain
 poll_interval = 15                       # 外发队列扫描间隔（秒）
@@ -206,6 +211,32 @@ tls_key = "/etc/mail_go/certs/server.key"
 > # 证书路径: /etc/letsencrypt/live/mail.example.com/fullchain.pem
 > # 私钥路径: /etc/letsencrypt/live/mail.example.com/privkey.pem
 > ```
+
+#### 从 Caddy 一键导入证书
+
+如果本机已用 [Caddy](https://caddyserver.com/) 托管该域名 HTTPS（Caddy 会自动签发并续期证书），
+可在管理后台 **域名管理 → 编辑域名** 页面点击 **“从 Caddy 获取证书”** 按钮，
+一键把 Caddy 存储中的证书与私钥导入邮件服务（自动启用该域名的 TLS），无需手动复制 PEM 文件。
+支持通配符证书（如 `*.example.com` 可匹配 `mail.example.com`）。
+证书支持**热加载**：导入（或手动上传）后立即生效，无需重启服务——SMTP/IMAP/POP3
+每次 TLS 握手会自动检查并重载变化的证书文件。
+
+由于 Caddy 的证书目录仅 `caddy` 用户可读，install.sh 会安装一个 root 权限的证书同步任务
+（`mailgo-caddy-sync.{path,timer}`），把 Caddy 证书树镜像到 `/srv/mail_go/tls/caddy`，
+证书续期后自动同步，mail_go 始终可读；另外还会授予 ACL 权限作为直接读取的兜底。
+安装时自动配置，也可手动执行：
+
+```bash
+sudo ./install.sh setup-caddy-cert          # 自动探测 Caddy 数据目录并配置同步 + ACL
+sudo ./install.sh setup-caddy-cert /path/to/caddy/data   # 或手动指定数据目录
+```
+
+若 Caddy 数据目录不在常见位置，可在配置文件中显式指定：
+
+```toml
+[caddy]
+data_dir = "/var/lib/caddy/.local/share/caddy"
+```
 
 ### 4. 启用 OAuth2 登录（Google 示例）
 

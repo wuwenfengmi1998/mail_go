@@ -24,6 +24,7 @@
                 <div class="card">
                     <h2 style="margin-bottom:16px;">{{if .isEdit}}编辑域名{{else}}新增域名{{end}}</h2>
                     {{if .error}}<div class="alert alert-error">{{.error}}</div>{{end}}
+                    {{if .caddyMsg}}<div class="alert {{if eq .caddyMsgType "success"}}alert-success{{else}}alert-error{{end}}">{{.caddyMsg}}</div>{{end}}
                     <form method="POST" action="{{if .isEdit}}/admin/domains/{{.domain.ID}}{{else}}/admin/domains{{end}}">
                         <div class="form-group">
                             <label>域名</label>
@@ -63,11 +64,39 @@
                                 <label>TLS 公钥证书 PEM</label>
                                 <textarea name="tls_public_cert" rows="8" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----" style="font-family:monospace;">{{.tlsPublicCert}}</textarea>
                                 {{if .tlsCertConfigured}}
-                                <p style="color:#27ae60;font-size:12px;margin-top:4px;">✅ TLS 证书已配置；上传新证书后需重启服务生效。</p>
+                                <p style="color:#27ae60;font-size:12px;margin-top:4px;">✅ TLS 证书已配置；上传新证书后自动热加载生效。</p>
                                 {{else}}
                                 <p style="color:#e67e22;font-size:12px;margin-top:4px;">⚠️ TLS 证书未配置，启用 TLS 时必须同时填写私钥和证书。</p>
                                 {{end}}
                             </div>
+                        </div>
+                        <div class="form-group" style="margin-top:4px;">
+                            <label>从 Caddy 获取证书</label>
+                            <p style="color:#7f8c8d;font-size:12px;margin-top:2px;margin-bottom:8px;">若该域名已由本机 Caddy 托管 HTTPS（自动签发证书），可一键导入其证书与私钥，并自动启用 TLS；证书热加载，无需重启服务。</p>
+                            <button type="button" class="btn" id="btn_fetch_caddy" onclick="fetchCaddyCert()" style="background:#2e86de;color:#fff;">🔒 从 Caddy 获取证书</button>
+                            <span id="caddy_fetch_msg" style="margin-left:10px;font-size:12px;color:#7f8c8d;"></span>
+                            <script>
+                            async function fetchCaddyCert() {
+                                var btn = document.getElementById('btn_fetch_caddy');
+                                var msg = document.getElementById('caddy_fetch_msg');
+                                btn.disabled = true;
+                                var oldText = btn.textContent;
+                                btn.textContent = '获取中…';
+                                msg.textContent = '';
+                                try {
+                                    var resp = await fetch('/admin/domains/{{.domain.ID}}/fetch-caddy-cert', { method: 'POST' });
+                                    if (resp.redirected) {
+                                        window.location.href = resp.url;
+                                        return;
+                                    }
+                                    msg.textContent = '获取失败: ' + await resp.text();
+                                } catch (e) {
+                                    msg.textContent = '请求失败: ' + e;
+                                }
+                                btn.disabled = false;
+                                btn.textContent = oldText;
+                            }
+                            </script>
                         </div>
                         {{end}}
                         <script>

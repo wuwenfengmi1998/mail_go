@@ -7,6 +7,7 @@ import (
 
 	"mail_go/config"
 	"mail_go/internal/store"
+	"mail_go/internal/tlsutil"
 
 	"github.com/emersion/go-imap/backend"
 	imapserver "github.com/emersion/go-imap/server"
@@ -14,27 +15,27 @@ import (
 
 // IMAPServer wraps a go-imap Server and provides mailbox access capability.
 type IMAPServer struct {
-	stores *store.Stores
-	cfg    config.IMAPConfig
+	stores    *store.Stores
+	cfg       config.IMAPConfig
+	tlsLoader *tlsutil.Loader
 }
 
-// NewIMAPServer creates a new IMAP server instance.
-func NewIMAPServer(cfg config.IMAPConfig, stores *store.Stores) *IMAPServer {
+// NewIMAPServer creates a new IMAP server instance. tlsLoader may be nil
+// when TLS is not configured.
+func NewIMAPServer(cfg config.IMAPConfig, stores *store.Stores, tlsLoader *tlsutil.Loader) *IMAPServer {
 	return &IMAPServer{
-		stores: stores,
-		cfg:    cfg,
+		stores:    stores,
+		cfg:       cfg,
+		tlsLoader: tlsLoader,
 	}
 }
 
 func (s *IMAPServer) tlsConfig() (*tls.Config, error) {
-	if s.cfg.TLSCert == "" || s.cfg.TLSKey == "" {
+	if s.tlsLoader == nil {
 		return nil, fmt.Errorf("IMAP TLS certificate or key not configured")
 	}
-	cert, err := tls.LoadX509KeyPair(s.cfg.TLSCert, s.cfg.TLSKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load IMAP TLS certificate: %w", err)
-	}
-	return &tls.Config{Certificates: []tls.Certificate{cert}}, nil
+	// GetCertificate 每次握手按需重载证书，证书更新后无需重启服务
+	return &tls.Config{GetCertificate: s.tlsLoader.GetCertificate}, nil
 }
 
 // newServer creates a configured imapserver.Server with the given address.

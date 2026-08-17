@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"mail_go/config"
@@ -22,6 +23,7 @@ import (
 	"mail_go/internal/smtp_server"
 	"mail_go/internal/storage"
 	"mail_go/internal/store"
+	"mail_go/internal/tlsutil"
 	"mail_go/internal/web"
 
 	"golang.org/x/crypto/bcrypt"
@@ -35,7 +37,7 @@ func applyDomainTLSConfig(stores *store.Stores, cfg *config.Config) {
 
 	applied := applyTLSCertPaths(cfg, domain.TlsCertPath, domain.TlsKeyPath)
 	if applied {
-		log.Printf("使用域名 %s 的 TLS 证书；更新证书后需重启服务生效", domain.Name)
+		log.Printf("使用域名 %s 的 TLS 证书；证书更新后自动热加载，无需重启服务", domain.Name)
 	}
 }
 
@@ -57,6 +59,49 @@ func applyTLSCertPaths(cfg *config.Config, certPath, keyPath string) bool {
 		applied = true
 	}
 	return applied
+}
+
+// tlsSource 返回证书路径来源：协议在 toml 中显式配置的证书优先；
+// 否则取第一个启用 TLS 且有证书的域名（管理后台一键导入证书后自动
+// 切换，无需重启）。结果缓存 10 秒，避免每次握手都查询数据库。
+func tlsSource(explicitCert, explicitKey string, stores *store.Stores) tlsutil.Source {
+	var (
+		mu         sync.Mutex
+		lastCheck  time.Time
+		cachedCert string
+		cachedKey  string
+	)
+	return func() (string, string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if time.Since(lastCheck) < 10*time.Second {
+			return cachedCert, cachedKey
+		}
+		lastCheck = time.Now()
+		if explicitCert != "" && explicitKey != "" {
+			cachedCert, cachedKey = explicitCert, explicitKey
+		} else if d, err := stores.Domains.GetFirstTLSEnabledWithCert(); err == nil {
+			cachedCert, cachedKey = d.TlsCertPath, d.TlsKeyPath
+		} else {
+			cachedCert, cachedKey = "", ""
+		}
+		return cachedCert, cachedKey
+	}
+}
+
+// newTLSCertLoader 创建带热加载的 TLS 证书加载器（每次握手自动重载）。
+// 初始路径取显式配置或启动时填充的路径；source 允许后续动态切换
+// 证书来源。加载失败返回 nil，对应协议将不启用 TLS。
+func newTLSCertLoader(explicitCert, explicitKey, initCert, initKey string, stores *store.Stores, proto string) *tlsutil.Loader {
+	if initCert == "" || initKey == "" {
+		initCert, initKey = explicitCert, explicitKey
+	}
+	loader, err := tlsutil.NewLoader(initCert, initKey, tlsSource(explicitCert, explicitKey, stores), log.Printf)
+	if err != nil {
+		log.Printf("%s TLS 证书初始化失败: %v（该协议将不启用 TLS）", proto, err)
+		return nil
+	}
+	return loader
 }
 
 func ensureSelfSignedTLSConfig(cfg *config.Config) {
@@ -168,8 +213,20 @@ func main() {
 
 	// 5. Initialize attachment storage
 	attStorage := storage.NewAttachmentStorage(cfg.Storage.AttachDir)
+
+	// 记录 toml 中显式配置的证书路径；此后 applyDomainTLSConfig 会用
+	// 域名证书填充空值，需要原始值来判断“显式配置优先”。
+	explicitSMTPCert, explicitSMTPKey := cfg.SMTP.TLSCert, cfg.SMTP.TLSKey
+	explicitIMAPCert, explicitIMAPKey := cfg.IMAP.TLSCert, cfg.IMAP.TLSKey
+	explicitPOP3Cert, explicitPOP3Key := cfg.POP3.TLSCert, cfg.POP3.TLSKey
+
 	applyDomainTLSConfig(stores, cfg)
 	ensureSelfSignedTLSConfig(cfg)
+
+	// 证书热加载器：每次 TLS 握手自动重载证书文件，证书更新后无需重启
+	smtpTLS := newTLSCertLoader(explicitSMTPCert, explicitSMTPKey, cfg.SMTP.TLSCert, cfg.SMTP.TLSKey, stores, "SMTP")
+	imapTLS := newTLSCertLoader(explicitIMAPCert, explicitIMAPKey, cfg.IMAP.TLSCert, cfg.IMAP.TLSKey, stores, "IMAP")
+	pop3TLS := newTLSCertLoader(explicitPOP3Cert, explicitPOP3Key, cfg.POP3.TLSCert, cfg.POP3.TLSKey, stores, "POP3")
 
 	// 6. Outbound delivery manager (external mail queue + worker)
 	outboundMgr := outbound.NewManager(cfg.Outbound, cfg.SMTP.Domain, stores)
@@ -181,7 +238,7 @@ func main() {
 	}
 
 	// 7. Start SMTP server
-	smtpSrv := smtp_server.NewSMTPServer(cfg.SMTP, stores, attStorage, outboundMgr)
+	smtpSrv := smtp_server.NewSMTPServer(cfg.SMTP, stores, attStorage, outboundMgr, smtpTLS)
 	go func() {
 		if err := smtpSrv.Start(); err != nil {
 			log.Printf("SMTP 服务启动失败: %v", err)
@@ -202,7 +259,7 @@ func main() {
 	}
 
 	// 7. Start IMAP server
-	imapSrv := imap_server.NewIMAPServer(cfg.IMAP, stores)
+	imapSrv := imap_server.NewIMAPServer(cfg.IMAP, stores, imapTLS)
 	go func() {
 		if err := imapSrv.Start(); err != nil {
 			log.Printf("IMAP 服务启动失败: %v", err)
@@ -218,7 +275,7 @@ func main() {
 	}
 
 	// 8. Start POP3 server
-	pop3Srv := pop3_server.NewPOP3Server(cfg.POP3, stores)
+	pop3Srv := pop3_server.NewPOP3Server(cfg.POP3, stores, pop3TLS)
 	go func() {
 		if err := pop3Srv.Start(); err != nil {
 			log.Printf("POP3 服务启动失败: %v", err)
@@ -234,7 +291,7 @@ func main() {
 	}
 
 	// 10. Start Web server
-	webServer := web.NewWebServer(cfg.Web, stores, attStorage, cfg.Storage, cfg.Auth, cfg.Ban, outboundMgr)
+	webServer := web.NewWebServer(cfg.Web, stores, attStorage, cfg.Storage, cfg.Auth, cfg.Ban, cfg.Caddy, outboundMgr)
 	fmt.Printf("Web 服务启动在 %s\n", cfg.Web.Addr)
 	go func() {
 		if err := webServer.Start(); err != nil {

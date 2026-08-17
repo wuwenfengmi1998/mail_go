@@ -15,6 +15,7 @@ import (
 	"mail_go/internal/outbound"
 	"mail_go/internal/storage"
 	"mail_go/internal/store"
+	"mail_go/internal/tlsutil"
 
 	"github.com/emersion/go-message/mail"
 	"github.com/emersion/go-sasl"
@@ -31,27 +32,25 @@ const (
 
 // SMTPServer wraps go-smtp servers and provides local mail delivery.
 type SMTPServer struct {
-	stores   *store.Stores
-	storage  *storage.AttachmentStorage
-	outbound *outbound.Manager
-	cfg      config.SMTPConfig
+	stores    *store.Stores
+	storage   *storage.AttachmentStorage
+	outbound  *outbound.Manager
+	cfg       config.SMTPConfig
+	tlsLoader *tlsutil.Loader
 }
 
-// NewSMTPServer creates a new SMTP server instance.
-func NewSMTPServer(cfg config.SMTPConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, ob *outbound.Manager) *SMTPServer {
-	return &SMTPServer{stores: stores, storage: attStorage, outbound: ob, cfg: cfg}
+// NewSMTPServer creates a new SMTP server instance. tlsLoader may be nil
+// when TLS is not configured.
+func NewSMTPServer(cfg config.SMTPConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, ob *outbound.Manager, tlsLoader *tlsutil.Loader) *SMTPServer {
+	return &SMTPServer{stores: stores, storage: attStorage, outbound: ob, cfg: cfg, tlsLoader: tlsLoader}
 }
 
 func (s *SMTPServer) tlsConfig() (*tls.Config, error) {
-	if s.cfg.TLSCert == "" || s.cfg.TLSKey == "" {
+	if s.tlsLoader == nil {
 		return nil, fmt.Errorf("SMTP TLS certificate or key not configured")
 	}
-
-	cert, err := tls.LoadX509KeyPair(s.cfg.TLSCert, s.cfg.TLSKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load SMTP TLS certificate: %w", err)
-	}
-	return &tls.Config{Certificates: []tls.Certificate{cert}}, nil
+	// GetCertificate 每次握手按需重载证书，证书更新后无需重启服务
+	return &tls.Config{GetCertificate: s.tlsLoader.GetCertificate}, nil
 }
 
 func (s *SMTPServer) newServer(addr string, mode smtpMode, tlsConfig *tls.Config) *smtp.Server {

@@ -38,14 +38,15 @@ func formatBytes(b int64) string {
 
 // WebServer wraps the Gin engine and its dependencies.
 type WebServer struct {
-	engine     *gin.Engine
-	stores     *store.Stores
-	storage    *storage.AttachmentStorage
-	cfg        config.WebConfig
-	storageCfg config.StorageConfig
-	authCfg    config.AuthConfig
-	banCfg     config.BanConfig
-	outbound   *outbound.Manager
+	engine       *gin.Engine
+	stores       *store.Stores
+	storage      *storage.AttachmentStorage
+	cfg          config.WebConfig
+	storageCfg   config.StorageConfig
+	authCfg      config.AuthConfig
+	banCfg       config.BanConfig
+	caddyDataDir string
+	outbound     *outbound.Manager
 }
 
 // templateFuncs returns custom template functions for rendering.
@@ -84,7 +85,7 @@ func templateFuncs() template.FuncMap {
 
 // NewWebServer creates a new WebServer, initializes the Gin engine,
 // configures sessions, middleware, and registers all routes.
-func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, storageCfg config.StorageConfig, authCfg config.AuthConfig, banCfg config.BanConfig, ob *outbound.Manager) *WebServer {
+func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, storageCfg config.StorageConfig, authCfg config.AuthConfig, banCfg config.BanConfig, caddyCfg config.CaddyConfig, ob *outbound.Manager) *WebServer {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	engine.Use(gin.Logger())
@@ -107,14 +108,15 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 	engine.SetHTMLTemplate(tmpl)
 
 	ws := &WebServer{
-		engine:     engine,
-		stores:     stores,
-		storage:    attStorage,
-		cfg:        cfg,
-		storageCfg: storageCfg,
-		authCfg:    authCfg,
-		banCfg:     banCfg,
-		outbound:   ob,
+		engine:       engine,
+		stores:       stores,
+		storage:      attStorage,
+		cfg:          cfg,
+		storageCfg:   storageCfg,
+		authCfg:      authCfg,
+		banCfg:       banCfg,
+		caddyDataDir: caddyCfg.DataDir,
+		outbound:     ob,
 	}
 
 	ws.registerRoutes()
@@ -125,7 +127,7 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 func (ws *WebServer) registerRoutes() {
 	authHandler := handlers.NewAuthHandler(ws.stores, ws.authCfg, ws.banCfg)
 	mailHandler := handlers.NewMailHandler(ws.stores, ws.storage, ws.outbound)
-	adminHandler := handlers.NewAdminHandler(ws.stores, ws.storage, filepath.Join(ws.storageCfg.BaseDir, "tls", "domains"), ws.outbound)
+	adminHandler := handlers.NewAdminHandler(ws.stores, ws.storage, filepath.Join(ws.storageCfg.BaseDir, "tls", "domains"), ws.caddyDataDir, ws.outbound)
 
 	// Apply BanMiddleware globally before public routes
 	ws.engine.Use(middleware.BanMiddleware(ws.stores))
@@ -175,6 +177,7 @@ func (ws *WebServer) registerRoutes() {
 		admin.GET("/domains/:id/edit", adminHandler.EditDomain)
 		admin.POST("/domains/:id", adminHandler.UpdateDomain)
 		admin.POST("/domains/:id/delete", adminHandler.DeleteDomain)
+		admin.POST("/domains/:id/fetch-caddy-cert", adminHandler.FetchCaddyCert)
 		admin.GET("/domains/:id/dns", adminHandler.DNSHint)
 		admin.GET("/users", adminHandler.ListUsers)
 		admin.GET("/users/new", adminHandler.NewUser)
