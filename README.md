@@ -1,17 +1,30 @@
 # MailGo
 
 Go 语言编写的轻量级邮件系统，集成 SMTP / IMAP / POP3 协议服务和 Web 管理界面。
+Web 前端采用 QQ 邮箱风格的布局：顶部导航 + 左侧文件夹栏 + 邮件列表三栏设计。
 
 ## 功能特性
 
 - **邮件协议**：SMTP（发送）、IMAP（同步）、POP3（收取），均支持 TLS 加密
 - **外部投递**：认证用户可向外部邮箱（QQ/Gmail/Outlook 等）发送邮件，内置外发队列、MX 直投、STARTTLS、指数退避重试、退信通知与 DKIM 签名
-- **Web 邮箱**：收件箱、已发送、草稿箱、富文本编辑（Quill.js）、附件上传/下载
+- **Web 邮箱**：QQ 邮箱风格界面，支持收件箱 / 已发送 / 草稿箱、未读角标与搜索过滤、全选 / 批量删除、发件人头像、富文本编辑（Quill.js）、附件上传/下载
 - **管理后台**：域名管理、用户管理、DKIM 密钥自动生成、DNS 配置提示、全量邮件查看、外发队列管理、IP 封禁管理、仪表盘统计
 - **外部认证**：OAuth2（Google / GitHub）、LDAP（可选，默认关闭）
 - **安全机制**：BCrypt 密码哈希、登录失败自动封禁 IP、外发频率限制（防滥用）、非认证禁止中继（防开放中继）、管理员可解封
 - **多数据库**：默认 SQLite，可切换 MySQL
 - **跨平台**：Linux 生产部署 + Windows 本地调试
+
+## 界面预览
+
+| 收件箱 | 邮件阅读 |
+|--------|----------|
+| ![收件箱](docs/screenshots/inbox.png) | ![邮件阅读](docs/screenshots/view.png) |
+
+| 写信 | 设置 | 登录 |
+|------|------|------|
+| ![写信](docs/screenshots/compose.png) | ![设置](docs/screenshots/settings.png) | ![登录](docs/screenshots/login.png) |
+
+> 截图使用演示数据渲染，实际界面以部署为准。
 
 ## 快速开始
 
