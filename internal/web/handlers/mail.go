@@ -56,6 +56,14 @@ func NewMailHandler(stores *store.Stores, attStorage *storage.AttachmentStorage,
 	return &MailHandler{stores: stores, storage: attStorage, outbound: ob}
 }
 
+// folderCounts returns sidebar badge counts for the current user.
+func (h *MailHandler) folderCounts(userID uint) (inboxUnread, draftsTotal, sentTotal int64) {
+	inboxUnread, _ = h.stores.Mails.CountUnread(userID, "INBOX")
+	draftsTotal, _ = h.stores.Mails.CountByUserAndFolder(userID, "Drafts")
+	sentTotal, _ = h.stores.Mails.CountByUserAndFolder(userID, "Sent")
+	return
+}
+
 // Inbox renders the inbox page showing all messages in the user's INBOX folder.
 func (h *MailHandler) Inbox(c *gin.Context) {
 	userID := c.GetUint("userID")
@@ -67,7 +75,7 @@ func (h *MailHandler) Inbox(c *gin.Context) {
 		return
 	}
 
-	unreadCount, _ := h.stores.Mails.CountUnread(userID, "INBOX")
+	inboxUnread, draftsTotal, sentTotal := h.folderCounts(userID)
 
 	currentUser, _ := c.Get("currentUser")
 
@@ -83,12 +91,14 @@ func (h *MailHandler) Inbox(c *gin.Context) {
 		"currentUser":  currentUser,
 		"messages":     messages,
 		"total":        total,
-		"unreadCount":  unreadCount,
 		"page":         page,
 		"pageSize":     20,
 		"totalPages":   totalPages,
 		"folder":       "INBOX",
 		"activeFolder": "inbox",
+		"inboxUnread":  inboxUnread,
+		"draftsTotal":  draftsTotal,
+		"sentTotal":    sentTotal,
 	})
 }
 
@@ -123,12 +133,16 @@ func (h *MailHandler) View(c *gin.Context) {
 	}
 
 	currentUser, _ := c.Get("currentUser")
+	inboxUnread, draftsTotal, sentTotal := h.folderCounts(userID)
 
 	c.HTML(200, "view", gin.H{
 		"currentUser":  currentUser,
 		"message":      msg,
 		"attachments":  attachments,
 		"activeFolder": resolveActiveFolder(msg.Folder),
+		"inboxUnread":  inboxUnread,
+		"draftsTotal":  draftsTotal,
+		"sentTotal":    sentTotal,
 	})
 }
 
@@ -146,6 +160,8 @@ func (h *MailHandler) Compose(c *gin.Context) {
 		quotaBytes = user.QuotaBytes
 	}
 
+	inboxUnread, draftsTotal, sentTotal := h.folderCounts(userID)
+
 	c.HTML(200, "compose", gin.H{
 		"currentUser":  currentUser,
 		"activeFolder": "compose",
@@ -155,6 +171,9 @@ func (h *MailHandler) Compose(c *gin.Context) {
 		"bodyContent":  "",
 		"usedBytes":    usedBytes,
 		"quotaBytes":   quotaBytes,
+		"inboxUnread":  inboxUnread,
+		"draftsTotal":  draftsTotal,
+		"sentTotal":    sentTotal,
 	})
 }
 
@@ -495,6 +514,7 @@ func (h *MailHandler) Sent(c *gin.Context) {
 	}
 
 	currentUser, _ := c.Get("currentUser")
+	inboxUnread, draftsTotal, sentTotal := h.folderCounts(userID)
 
 	totalPages := int(total) / 20
 	if int(total)%20 > 0 {
@@ -513,6 +533,9 @@ func (h *MailHandler) Sent(c *gin.Context) {
 		"totalPages":   totalPages,
 		"folder":       "Sent",
 		"activeFolder": "sent",
+		"inboxUnread":  inboxUnread,
+		"draftsTotal":  draftsTotal,
+		"sentTotal":    sentTotal,
 	})
 }
 
@@ -630,6 +653,7 @@ func (h *MailHandler) Drafts(c *gin.Context) {
 	}
 
 	currentUser, _ := c.Get("currentUser")
+	inboxUnread, draftsTotal, sentTotal := h.folderCounts(userID)
 
 	totalPages := int(total) / 20
 	if int(total)%20 > 0 {
@@ -648,17 +672,25 @@ func (h *MailHandler) Drafts(c *gin.Context) {
 		"totalPages":   totalPages,
 		"folder":       "Drafts",
 		"activeFolder": "drafts",
+		"inboxUnread":  inboxUnread,
+		"draftsTotal":  draftsTotal,
+		"sentTotal":    sentTotal,
 	})
 }
 
 // Settings renders the user settings page.
 func (h *MailHandler) Settings(c *gin.Context) {
 	currentUser, _ := c.Get("currentUser")
+	userID := c.GetUint("userID")
+	inboxUnread, draftsTotal, sentTotal := h.folderCounts(userID)
 	c.HTML(200, "settings", gin.H{
 		"currentUser":  currentUser,
 		"activeFolder": "settings",
 		"error":        "",
 		"success":      "",
+		"inboxUnread":  inboxUnread,
+		"draftsTotal":  draftsTotal,
+		"sentTotal":    sentTotal,
 	})
 }
 

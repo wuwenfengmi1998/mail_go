@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"mail_go/config"
 	"mail_go/internal/mailutil"
@@ -80,7 +82,86 @@ func templateFuncs() template.FuncMap {
 		"decodeHeader": func(s string) string {
 			return mailutil.DecodeRFC2047(s)
 		},
+		// mailName 从 "Name <addr>" 中提取显示名；无显示名时退回邮箱地址。
+		"mailName": mailName,
+		// mailEmail 从 "Name <addr>" 中提取邮箱地址部分。
+		"mailEmail": mailEmail,
+		// initial 返回字符串的首字符（用于头像占位）。
+		"initial": initial,
+		// truncate 折叠空白并截断到 n 个字符（用于列表摘要）。
+		"truncate": truncate,
+		// shortDate 按 QQ 邮箱习惯格式化：今天显示 HH:mm，今年显示 MM-DD，更早显示 YYYY-MM-DD。
+		"shortDate": shortDate,
+		// avatarStyle 根据字符串哈希生成头像背景/前景色。
+		"avatarStyle": avatarStyle,
 	}
+}
+
+// mailName extracts the display name from an RFC 5322 address.
+func mailName(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '<'); i >= 0 {
+		name := strings.Trim(strings.TrimSpace(s[:i]), `"' `)
+		if name != "" {
+			return name
+		}
+		if j := strings.IndexByte(s, '>'); j > i {
+			return s[i+1 : j]
+		}
+	}
+	return s
+}
+
+// mailEmail extracts the bare email address from an RFC 5322 address.
+func mailEmail(s string) string {
+	if i := strings.IndexByte(s, '<'); i >= 0 {
+		if j := strings.IndexByte(s, '>'); j > i {
+			return s[i+1 : j]
+		}
+	}
+	return strings.TrimSpace(s)
+}
+
+// initial returns the first rune of a string, upper-cased.
+func initial(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "?"
+	}
+	r, _ := utf8.DecodeRuneInString(s)
+	return strings.ToUpper(string(r))
+}
+
+// truncate collapses whitespace and cuts the string to n runes.
+func truncate(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
+}
+
+// shortDate formats a time like QQ Mail does: today -> HH:mm,
+// this year -> MM-DD, otherwise -> YYYY-MM-DD.
+func shortDate(t time.Time) string {
+	now := time.Now()
+	if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
+		return t.Format("15:04")
+	}
+	if t.Year() == now.Year() {
+		return t.Format("01-02")
+	}
+	return t.Format("2006-01-02")
+}
+
+// avatarStyle returns inline CSS colors derived from a string hash.
+func avatarStyle(s string) string {
+	h := 0
+	for _, r := range s {
+		h = (h*31 + int(r)) % 360
+	}
+	return fmt.Sprintf("background:hsl(%d,78%%,92%%);color:hsl(%d,72%%,36%%)", h, h)
 }
 
 // NewWebServer creates a new WebServer, initializes the Gin engine,

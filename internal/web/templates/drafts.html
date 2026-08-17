@@ -7,68 +7,148 @@
     <title>草稿箱 - MailGo</title>
     {{template "styles" .}}
 </head>
-<body>
+<body class="page-list">
     {{template "navbar" .}}
-    <div class="container">
-        <div class="clearfix">
-            <div class="sidebar">
-                <a href="/inbox" class="{{if eq .activeFolder `inbox`}}active{{end}}">收件箱</a>
-                <a href="/drafts" class="{{if eq .activeFolder `drafts`}}active{{end}}">草稿箱</a>
-                <a href="/sent" class="{{if eq .activeFolder `sent`}}active{{end}}">发件箱</a>
-                <a href="/compose" class="{{if eq .activeFolder `compose`}}active{{end}}">撰写邮件</a>
-                <a href="/settings" class="{{if eq .activeFolder `settings`}}active{{end}}">设置</a>
+    <div class="app-body">
+        {{template "sidebar" .}}
+        <main class="mail-main">
+            <div class="list-toolbar">
+                <label class="check-all" title="全选/取消全选">
+                    <input type="checkbox" id="select-all">
+                    全选
+                </label>
+                <button type="button" class="tb-btn" id="btn-refresh" title="刷新">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                    刷新
+                </button>
+                <button type="button" class="tb-btn danger" id="btn-delete" disabled>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    删除
+                </button>
+                <div class="toolbar-spacer"></div>
+                <span class="page-info">共 {{.total}} 封</span>
             </div>
-            <div class="content">
-                <div class="card">
-                    <h2 style="margin-bottom:16px;">草稿箱</h2>
-                    {{if not .messages}}
-                    <p style="color:#7f8c8d;text-align:center;padding:40px 0;">暂无草稿邮件</p>
-                    {{else}}
-                    <table>
-                        <thead>
-                            <tr>
-                                <th style="width:25%;">发件人/收件人</th>
-                                <th style="width:45%;">主题</th>
-                                <th style="width:20%;">时间</th>
-                                <th style="width:10%;">操作</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                        {{range .messages}}
-                            <tr>
-                                <td>{{.ToAddr}}</td>
-                                <td>
-                                    <a href="/drafts/{{.ID}}" class="message-subject">
-                                        {{if .Subject}}{{.Subject}}{{else}}(无主题){{end}}
-                                    </a>
-                                </td>
-                                <td>{{.Date.Format "2006-01-02 15:04"}}</td>
-                                <td>
-                                    <form method="POST" action="/mail/delete/{{.ID}}" style="display:inline;"
-                                          onsubmit="return confirm('确定要删除这封邮件吗？');">
-                                        <button type="submit" class="btn btn-danger btn-sm">删除</button>
-                                    </form>
-                                </td>
-                            </tr>
-                        {{end}}
-                        </tbody>
-                    </table>
-                    {{end}}
-                </div>
-                {{if .totalPages}}
-                <div class="pagination">
-                    {{if gt .page 1}}
-                    <a href="/drafts?page={{sub .page 1}}">上一页</a>
-                    {{end}}
-                    <span>第 {{.page}} / {{.totalPages}} 页</span>
-                    {{if lt .page .totalPages}}
-                    <a href="/drafts?page={{add .page 1}}">下一页</a>
-                    {{end}}
-                </div>
+
+            {{if not .messages}}
+            <div class="mail-list">
+                <div class="empty-tip"><span class="empty-icon">📝</span>草稿箱暂无邮件</div>
+            </div>
+            {{else}}
+            <ul class="mail-list">
+                {{range .messages}}
+                <li class="mail-row" data-id="{{.ID}}">
+                    <label class="cell-check" onclick="event.stopPropagation()">
+                        <input type="checkbox" class="row-check" data-id="{{.ID}}">
+                    </label>
+                    <span class="cell-avatar">
+                        <span class="avatar" style="{{avatarStyle .ToAddr}}">{{initial (mailName .ToAddr)}}</span>
+                    </span>
+                    <span class="cell-from" title="收件人：{{.ToAddr}}">致：{{mailName .ToAddr}}</span>
+                    <span class="cell-subject-wrap">
+                        <a class="cell-subject" href="/drafts/{{.ID}}">
+                            {{if .Subject}}{{.Subject}}{{else}}(无主题){{end}}
+                        </a>
+                    </span>
+                    <span class="cell-snippet">
+                        {{if .TextBody}}{{truncate .TextBody 80}}{{else if .HtmlBody}}[HTML 邮件]{{end}}
+                    </span>
+                    <span class="cell-date">{{shortDate .Date}}</span>
+                    <form method="POST" action="/mail/delete/{{.ID}}" class="row-del"
+                          onsubmit="return confirm('确定要删除这封草稿吗？');">
+                        <button type="submit" class="icon-btn" title="删除">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        </button>
+                    </form>
+                </li>
                 {{end}}
+            </ul>
+            {{end}}
+
+            <div class="list-footer">
+                <span class="page-num">第 {{.page}} / {{if .totalPages}}{{.totalPages}}{{else}}1{{end}} 页</span>
+                <div class="pager">
+                    {{if gt .page 1}}
+                    <a class="page-btn" href="/drafts?page={{sub .page 1}}">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                        上一页
+                    </a>
+                    {{else}}
+                    <span class="page-btn disabled">上一页</span>
+                    {{end}}
+                    {{if lt .page .totalPages}}
+                    <a class="page-btn" href="/drafts?page={{add .page 1}}">
+                        下一页
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                    </a>
+                    {{else}}
+                    <span class="page-btn disabled">下一页</span>
+                    {{end}}
+                </div>
             </div>
-        </div>
+        </main>
     </div>
+    <script>
+    (function () {
+        var searchInput = document.getElementById('mail-search');
+        var rows = Array.prototype.slice.call(document.querySelectorAll('.mail-row'));
+        var selectAll = document.getElementById('select-all');
+        var btnDelete = document.getElementById('btn-delete');
+
+        rows.forEach(function (row) {
+            row.addEventListener('click', function (e) {
+                if (e.target.closest('.cell-check') || e.target.closest('.row-del')) return;
+                window.location.href = row.querySelector('.cell-subject').getAttribute('href');
+            });
+        });
+
+        selectAll && selectAll.addEventListener('change', function () {
+            rows.forEach(function (row) {
+                var cb = row.querySelector('.row-check');
+                cb.checked = selectAll.checked;
+                row.classList.toggle('selected', cb.checked);
+            });
+            updateDeleteState();
+        });
+        rows.forEach(function (row) {
+            var cb = row.querySelector('.row-check');
+            cb.addEventListener('change', function () {
+                row.classList.toggle('selected', cb.checked);
+                if (!cb.checked && selectAll) selectAll.checked = false;
+                updateDeleteState();
+            });
+        });
+
+        function updateDeleteState() {
+            if (!btnDelete) return;
+            var n = rows.filter(function (r) { return r.querySelector('.row-check').checked; }).length;
+            btnDelete.disabled = n === 0;
+        }
+
+        btnDelete && btnDelete.addEventListener('click', function () {
+            var ids = rows.filter(function (r) { return r.querySelector('.row-check').checked; })
+                          .map(function (r) { return r.dataset.id; });
+            if (!ids.length) return;
+            if (!confirm('确定要删除选中的 ' + ids.length + ' 封邮件吗？')) return;
+            var done = 0;
+            ids.forEach(function (id) {
+                fetch('/mail/delete/' + id, { method: 'POST', body: new FormData() })
+                    .then(function () { if (++done === ids.length) window.location.reload(); })
+                    .catch(function () { if (++done === ids.length) window.location.reload(); });
+            });
+        });
+
+        var btnRefresh = document.getElementById('btn-refresh');
+        btnRefresh && btnRefresh.addEventListener('click', function () { window.location.reload(); });
+
+        searchInput && searchInput.addEventListener('input', function () {
+            var q = searchInput.value.trim().toLowerCase();
+            rows.forEach(function (row) {
+                var text = row.textContent.toLowerCase();
+                row.style.display = (!q || text.indexOf(q) !== -1) ? '' : 'none';
+            });
+        });
+    })();
+    </script>
 </body>
 </html>
 {{end}}
