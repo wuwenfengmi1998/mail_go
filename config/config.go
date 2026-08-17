@@ -79,6 +79,15 @@ type BanConfig struct {
 	BanDurationMin  int `toml:"ban_duration_min"`  // Default: 30 (minutes)
 }
 
+// CaddyConfig holds settings for importing TLS certificates from a local Caddy.
+type CaddyConfig struct {
+	// DataDir is the Caddy data directory (the one containing the
+	// "certificates/" subdirectory), used by the one-click certificate
+	// import in the admin panel. Leave empty to auto-detect common
+	// locations such as /var/lib/caddy/.local/share/caddy.
+	DataDir string `toml:"data_dir"`
+}
+
 // OutboundConfig holds outbound (external) mail delivery settings.
 type OutboundConfig struct {
 	Hostname       string `toml:"hostname"`        // EHLO 主机名，留空使用 [smtp] domain
@@ -114,6 +123,7 @@ type Config struct {
 	POP3     POP3Config     `toml:"pop3"`
 	Auth     AuthConfig     `toml:"auth"`
 	Ban      BanConfig      `toml:"ban"`
+	Caddy    CaddyConfig    `toml:"caddy"`
 	Outbound OutboundConfig `toml:"outbound"`
 }
 
@@ -184,6 +194,8 @@ func defaultConfig() *Config {
 			MaxFailAttempts: 5,
 			BanDurationMin:  30,
 		},
+		// Caddy: 留空则自动探测常见数据目录，无需配置
+		Caddy: CaddyConfig{},
 		Outbound: OutboundConfig{
 			PollInterval:   15, // 15 秒扫描一次队列
 			MaxAttempts:    12, // 最多尝试 12 次

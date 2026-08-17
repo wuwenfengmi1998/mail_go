@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"mail_go/internal/caddycert"
 	"mail_go/internal/db"
 	"mail_go/internal/dkim"
 	"mail_go/internal/outbound"
@@ -23,16 +25,17 @@ import (
 
 // AdminHandler handles admin-related routes (dashboard, domain/user management).
 type AdminHandler struct {
-	stores   *store.Stores
-	storage  *storage.AttachmentStorage
-	tlsDir   string
-	outbound *outbound.Manager
+	stores       *store.Stores
+	storage      *storage.AttachmentStorage
+	tlsDir       string
+	caddyDataDir string
+	outbound     *outbound.Manager
 }
 
 // NewAdminHandler creates a new AdminHandler with the given stores, attachment
-// storage, TLS directory and outbound delivery manager.
-func NewAdminHandler(stores *store.Stores, attStorage *storage.AttachmentStorage, tlsDir string, ob *outbound.Manager) *AdminHandler {
-	return &AdminHandler{stores: stores, storage: attStorage, tlsDir: tlsDir, outbound: ob}
+// storage, TLS directory, Caddy data directory and outbound delivery manager.
+func NewAdminHandler(stores *store.Stores, attStorage *storage.AttachmentStorage, tlsDir string, caddyDataDir string, ob *outbound.Manager) *AdminHandler {
+	return &AdminHandler{stores: stores, storage: attStorage, tlsDir: tlsDir, caddyDataDir: caddyDataDir, outbound: ob}
 }
 
 // Dashboard renders the admin dashboard with summary statistics.
@@ -209,6 +212,16 @@ func (h *AdminHandler) EditDomain(c *gin.Context) {
 	}
 
 	currentUser, _ := c.Get("currentUser")
+
+	caddyMsg, caddyMsgType := "", ""
+	if c.Query("caddy_err") != "" {
+		caddyMsg = c.Query("caddy_err")
+		caddyMsgType = "error"
+	} else if c.Query("caddy_ok") == "1" {
+		caddyMsg = "✅ 已从 Caddy 获取证书并保存到域名 TLS 目录，同时已启用该域名的 TLS；证书已热加载，无需重启服务。"
+		caddyMsgType = "success"
+	}
+
 	c.HTML(200, "admin_domain_form", gin.H{
 		"currentUser":       currentUser,
 		"activeFolder":      "domains",
@@ -217,6 +230,8 @@ func (h *AdminHandler) EditDomain(c *gin.Context) {
 		"domain":            domain,
 		"tlsPublicCert":     readTLSCert(domain.TlsCertPath),
 		"tlsCertConfigured": domain.TlsCertPath != "" && domain.TlsKeyPath != "",
+		"caddyMsg":          caddyMsg,
+		"caddyMsgType":      caddyMsgType,
 	})
 }
 
@@ -262,6 +277,78 @@ func (h *AdminHandler) UpdateDomain(c *gin.Context) {
 	}
 
 	c.Redirect(http.StatusFound, "/admin/domains")
+}
+
+// FetchCaddyCert 尝试从本机 Caddy 的证书存储中获取该域名的证书与私钥，
+// 保存到 MailGo 的域名 TLS 目录并更新数据库记录。结果通过查询参数回显到
+// 编辑页面（caddy_ok=1 成功 / caddy_err=<消息> 失败）。
+func (h *AdminHandler) FetchCaddyCert(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.String(http.StatusBadRequest, "无效的域名ID")
+		return
+	}
+
+	domain, err := h.stores.Domains.GetByID(uint(id))
+	if err != nil {
+		c.String(http.StatusNotFound, "域名不存在")
+		return
+	}
+
+	editURL := fmt.Sprintf("/admin/domains/%d/edit", domain.ID)
+	fail := func(msg string) {
+		log.Printf("从 Caddy 获取证书失败 domain=%s: %s", domain.Name, msg)
+		c.Redirect(http.StatusFound, editURL+"?caddy_err="+url.QueryEscape(msg))
+	}
+
+	cert, err := caddycert.Fetch(domain.Name, h.caddyCertRoots())
+	if err != nil {
+		fail(fmt.Sprintf("从 Caddy 获取证书失败: %v", err))
+		return
+	}
+
+	// 保存到域名 TLS 目录（与手动上传证书的位置一致）
+	domainTLSDir := filepath.Join(h.tlsDir, strconv.FormatUint(uint64(domain.ID), 10))
+	if err := os.MkdirAll(domainTLSDir, 0700); err != nil {
+		fail(fmt.Sprintf("创建 TLS 证书目录失败: %v", err))
+		return
+	}
+
+	certPath := filepath.Join(domainTLSDir, "cert.pem")
+	keyPath := filepath.Join(domainTLSDir, "key.pem")
+	if err := os.WriteFile(certPath, cert.CertPEM, 0644); err != nil {
+		fail(fmt.Sprintf("保存 TLS 公钥证书失败: %v", err))
+		return
+	}
+	if err := os.WriteFile(keyPath, cert.KeyPEM, 0600); err != nil {
+		fail(fmt.Sprintf("保存 TLS 私钥失败: %v", err))
+		return
+	}
+
+	domain.TlsCertPath = certPath
+	domain.TlsKeyPath = keyPath
+	domain.TlsEnabled = true
+	if err := h.stores.Domains.Update(domain); err != nil {
+		fail(fmt.Sprintf("更新域名记录失败: %v", err))
+		return
+	}
+
+	log.Printf("已从 Caddy 导入域名 %s 的证书 (%s)，热加载生效", domain.Name, cert.Source)
+	c.Redirect(http.StatusFound, editURL+"?caddy_ok=1")
+}
+
+// caddyCertRoots 返回按优先级排列的证书来源目录：
+//  1. MailGo 的同步镜像目录 <storage>/tls/caddy —— 由 install.sh 安装的
+//     systemd path 同步任务以 root 权限从 Caddy 证书存储镜像而来，
+//     mail_go 始终可读，证书续期后自动更新；
+//  2. 配置文件 caddy.data_dir 指定的目录（可选）；
+//
+// 其余默认位置由 caddycert.Fetch 自行探测。
+func (h *AdminHandler) caddyCertRoots() []string {
+	return []string{
+		filepath.Join(filepath.Dir(h.tlsDir), "caddy"),
+		h.caddyDataDir,
+	}
 }
 
 func readTLSCert(path string) string {

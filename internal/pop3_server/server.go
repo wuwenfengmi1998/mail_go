@@ -14,30 +14,30 @@ import (
 	"mail_go/config"
 	"mail_go/internal/db"
 	"mail_go/internal/store"
+	"mail_go/internal/tlsutil"
 )
 
 // POP3Server implements a simple POP3 mail server over TCP.
 type POP3Server struct {
-	listener net.Listener
-	stores   *store.Stores
-	cfg      config.POP3Config
-	wg       sync.WaitGroup
+	listener  net.Listener
+	stores    *store.Stores
+	cfg       config.POP3Config
+	tlsLoader *tlsutil.Loader
+	wg        sync.WaitGroup
 }
 
-// NewPOP3Server creates a new POP3 server instance.
-func NewPOP3Server(cfg config.POP3Config, stores *store.Stores) *POP3Server {
-	return &POP3Server{stores: stores, cfg: cfg}
+// NewPOP3Server creates a new POP3 server instance. tlsLoader may be nil
+// when TLS is not configured.
+func NewPOP3Server(cfg config.POP3Config, stores *store.Stores, tlsLoader *tlsutil.Loader) *POP3Server {
+	return &POP3Server{stores: stores, cfg: cfg, tlsLoader: tlsLoader}
 }
 
 func (s *POP3Server) tlsConfig() (*tls.Config, error) {
-	if s.cfg.TLSCert == "" || s.cfg.TLSKey == "" {
+	if s.tlsLoader == nil {
 		return nil, fmt.Errorf("POP3 TLS certificate or key not configured")
 	}
-	cert, err := tls.LoadX509KeyPair(s.cfg.TLSCert, s.cfg.TLSKey)
-	if err != nil {
-		return nil, fmt.Errorf("load POP3 TLS certificate failed: %w", err)
-	}
-	return &tls.Config{Certificates: []tls.Certificate{cert}}, nil
+	// GetCertificate 每次握手按需重载证书，证书更新后无需重启服务
+	return &tls.Config{GetCertificate: s.tlsLoader.GetCertificate}, nil
 }
 
 // Start starts the POP3 server on the configured plain-text port.
