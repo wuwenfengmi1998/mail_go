@@ -6,67 +6,83 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>查看邮件 - MailGo</title>
     {{template "styles" .}}
-    <style>
-        .mail-body-iframe {
-            width: 100%;
-            min-height: 300px;
-            border: 1px solid #e0e0e0;
-            border-radius: 4px;
-            background: #fff;
-        }
-    </style>
 </head>
-<body>
+<body class="page-view">
     {{template "navbar" .}}
-    <div class="container">
-        <div class="clearfix">
-            <div class="sidebar">
-                <a href="/inbox" class="{{if eq .activeFolder `inbox`}}active{{end}}">收件箱</a>
-                <a href="/drafts" class="{{if eq .activeFolder `drafts`}}active{{end}}">草稿箱</a>
-                <a href="/sent" class="{{if eq .activeFolder `sent`}}active{{end}}">发件箱</a>
-                <a href="/compose" class="{{if eq .activeFolder `compose`}}active{{end}}">撰写邮件</a>
-                <a href="/settings" class="{{if eq .activeFolder `settings`}}active{{end}}">设置</a>
+    <div class="app-body">
+        {{template "sidebar" .}}
+        <main class="mail-main">
+            <div class="view-toolbar">
+                <a href="javascript:history.back()" class="tb-btn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                    返回
+                </a>
+                <a href="/compose?to={{mailEmail .message.FromAddr}}&subject={{if .message.Subject}}Re: {{.message.Subject}}{{end}}" class="tb-btn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
+                    回复
+                </a>
+                <form method="POST" action="/mail/delete/{{.message.ID}}" style="display:inline;"
+                      onsubmit="return confirm('确定要删除这封邮件吗？');">
+                    <button type="submit" class="tb-btn danger">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        删除
+                    </button>
+                </form>
             </div>
-            <div class="content">
-                <div class="card">
-                    <div style="margin-bottom:16px;">
-                        <a href="javascript:history.back()" class="btn" style="background:#bdc3c7;color:#fff;">返回</a>
+
+            <div class="mail-head">
+                <h1 class="mail-title">{{if .message.Subject}}{{.message.Subject}}{{else}}(无主题){{end}}</h1>
+                <div class="mail-from-row">
+                    <span class="avatar" style="{{avatarStyle .message.FromAddr}}">{{initial (mailName (decodeHeader .message.FromAddr))}}</span>
+                    <div>
+                        <div class="mail-from-name">{{mailName (decodeHeader .message.FromAddr)}}</div>
+                        <div class="mail-from-addr" title="{{decodeHeader .message.FromAddr}}">{{mailEmail .message.FromAddr}}</div>
                     </div>
-                    <h2>{{if .message.Subject}}{{.message.Subject}}{{else}}(无主题){{end}}</h2>
-                    <div class="mail-meta" style="margin-top:12px;">
-                        <p><strong>发件人:</strong> {{decodeHeader .message.FromAddr}}</p>
-                        <p><strong>收件人:</strong> {{.message.ToAddr}}</p>
-                        {{if .message.CcAddr}}<p><strong>抄送:</strong> {{.message.CcAddr}}</p>{{end}}
-                        <p><strong>时间:</strong> {{.message.Date.Format "2006-01-02 15:04:05"}}</p>
-                    </div>
-                    <div class="mail-body">
-                        {{if .message.HtmlBody}}
-                        <iframe class="mail-body-iframe" srcdoc="{{.message.HtmlBody | safeJS}}" sandbox="allow-same-origin" onload="this.style.height=this.contentDocument.body.scrollHeight+20+'px'"></iframe>
-                        {{else}}
-                        <pre style="white-space:pre-wrap;font-family:inherit;">{{.message.TextBody}}</pre>
-                        {{end}}
-                    </div>
-                    {{if .attachments}}
-                    <div class="attachment-list">
-                        <h4 style="margin-bottom:8px;">附件</h4>
-                        {{range .attachments}}
-                        <div class="attachment-item">
-                            📎 <a href="/attachment/{{.ID}}">{{.FileName}}</a>
-                            <span style="color:#7f8c8d;font-size:12px;">({{formatBytes .FileSize}})</span>
-                        </div>
-                        {{end}}
-                    </div>
-                    {{end}}
-                    <div style="margin-top:20px;padding-top:16px;border-top:1px solid #eee;">
-                        <form method="POST" action="/mail/delete/{{.message.ID}}" style="display:inline;"
-                              onsubmit="return confirm('确定要删除这封邮件吗？');">
-                            <button type="submit" class="btn btn-danger">删除邮件</button>
-                        </form>
-                        <a href="/compose?to={{decodeHeader .message.FromAddr}}&subject={{if .message.Subject}}Re: {{.message.Subject}}{{end}}" class="btn btn-primary" style="margin-left:8px;">回复</a>
-                    </div>
+                    <span class="mail-date">{{.message.Date.Format "2006-01-02 15:04:05"}}</span>
                 </div>
+                {{if .message.CcAddr}}
+                <div class="mail-from-addr" style="margin:-8px 0 16px 48px;">
+                    抄送：{{.message.CcAddr}}
+                </div>
+                {{end}}
             </div>
-        </div>
+
+            <div class="mail-body-wrap">
+                <div class="mail-body">
+                    {{if .message.HtmlBody}}
+                    <iframe class="mail-body-iframe" srcdoc="{{.message.HtmlBody | safeJS}}" sandbox="allow-same-origin" onload="this.style.height=this.contentDocument.body.scrollHeight+20+'px'"></iframe>
+                    {{else}}
+                    <pre>{{.message.TextBody}}</pre>
+                    {{end}}
+                </div>
+
+                {{if .attachments}}
+                <div class="attachment-list">
+                    {{range .attachments}}
+                    <span class="attachment-item">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                        <a href="/attachment/{{.ID}}">{{.FileName}}</a>
+                        <span style="color:var(--text-3);font-size:12px;">({{formatBytes .FileSize}})</span>
+                    </span>
+                    {{end}}
+                </div>
+                {{end}}
+            </div>
+
+            <div class="view-actions">
+                <a href="/compose?to={{mailEmail .message.FromAddr}}&subject={{if .message.Subject}}Re: {{.message.Subject}}{{end}}" class="btn btn-primary">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
+                    回复
+                </a>
+                <form method="POST" action="/mail/delete/{{.message.ID}}" style="display:inline;"
+                      onsubmit="return confirm('确定要删除这封邮件吗？');">
+                    <button type="submit" class="btn btn-danger">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        删除邮件
+                    </button>
+                </form>
+            </div>
+        </main>
     </div>
 </body>
 </html>

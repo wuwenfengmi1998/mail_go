@@ -7,42 +7,74 @@
     <title>设置 - MailGo</title>
     {{template "styles" .}}
 </head>
-<body>
+<body class="page-settings">
     {{template "navbar" .}}
-    <div class="container">
-        <div class="clearfix">
-            <div class="sidebar">
-                <a href="/inbox" class="{{if eq .activeFolder `inbox`}}active{{end}}">收件箱</a>
-                <a href="/drafts" class="{{if eq .activeFolder `drafts`}}active{{end}}">草稿箱</a>
-                <a href="/sent" class="{{if eq .activeFolder `sent`}}active{{end}}">发件箱</a>
-                <a href="/compose" class="{{if eq .activeFolder `compose`}}active{{end}}">撰写邮件</a>
-                <a href="/settings" class="{{if eq .activeFolder `settings`}}active{{end}}">设置</a>
-            </div>
-            <div class="content">
-                <div class="card">
-                    <h2 style="margin-bottom:16px;">设置</h2>
-                    {{if .error}}<div class="alert alert-error">{{.error}}</div>{{end}}
-                    {{if .success}}<div class="alert alert-success">{{.success}}</div>{{end}}
-                    <h3 style="margin-bottom:12px;">修改密码</h3>
-                    <form method="POST" action="/settings">
-                        <div class="form-group">
-                            <label>当前密码</label>
-                            <input type="password" name="old_password" required placeholder="请输入当前密码">
+    <div class="app-body">
+        {{template "sidebar" .}}
+        <main class="mail-main" style="padding:24px;background:#f6f8fc;">
+            {{if .error}}<div class="alert alert-error">{{.error}}</div>{{end}}
+            {{if .success}}<div class="alert alert-success">{{.success}}</div>{{end}}
+
+            <div class="card" style="max-width:720px;">
+                <h2 style="font-size:17px;margin-bottom:18px;display:flex;align-items:center;gap:10px;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1677ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    账号信息
+                </h2>
+                <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px;">
+                    <span class="avatar" style="width:52px;height:52px;font-size:22px;{{avatarStyle .currentUser.Username}}">{{initial .currentUser.Username}}</span>
+                    <div>
+                        <div style="font-size:16px;font-weight:600;">{{.currentUser.Username}}@{{.currentUser.Domain.Name}}</div>
+                        <div style="color:var(--text-3);font-size:12.5px;margin-top:3px;">
+                            已用 {{formatBytes .currentUser.UsedBytes}} / 配额 {{formatBytes .currentUser.QuotaBytes}}
+                            {{if .currentUser.IsAdmin}} · 管理员{{end}}
                         </div>
-                        <div class="form-group">
-                            <label>新密码</label>
-                            <input type="password" name="new_password" required placeholder="请输入新密码">
-                        </div>
-                        <div class="form-group">
-                            <label>确认新密码</label>
-                            <input type="password" name="confirm_password" required placeholder="请再次输入新密码">
-                        </div>
-                        <button type="submit" class="btn btn-primary">修改密码</button>
-                    </form>
+                    </div>
                 </div>
+                <div class="quota-bar" style="width:100%;" data-used="{{.currentUser.UsedBytes}}" data-quota="{{.currentUser.QuotaBytes}}"><i></i></div>
             </div>
-        </div>
+
+            <div class="card" style="max-width:720px;">
+                <h2 style="font-size:17px;margin-bottom:18px;">修改密码</h2>
+                <form method="POST" action="/settings" style="max-width:420px;">
+                    <div class="form-group">
+                        <label>当前密码</label>
+                        <input type="password" name="old_password" required placeholder="请输入当前密码" autocomplete="current-password">
+                    </div>
+                    <div class="form-group">
+                        <label>新密码</label>
+                        <input type="password" name="new_password" required placeholder="请输入新密码" autocomplete="new-password">
+                    </div>
+                    <div class="form-group">
+                        <label>确认新密码</label>
+                        <input type="password" name="confirm_password" required placeholder="请再次输入新密码" autocomplete="new-password">
+                    </div>
+                    <button type="submit" class="btn btn-primary">修改密码</button>
+                </form>
+            </div>
+
+            <div class="card" style="max-width:720px;">
+                <h2 style="font-size:17px;margin-bottom:10px;">帮助</h2>
+                <p style="color:var(--text-2);font-size:13.5px;line-height:1.9;">
+                    客户端收发信（IMAP / SMTP）配置：<br>
+                    IMAP 服务器：{{.currentUser.Domain.Name}} 端口 143 / SSL 993<br>
+                    SMTP 服务器：{{.currentUser.Domain.Name}} 端口 587（提交）/ SSL 465
+                </p>
+            </div>
+        </main>
     </div>
+    <script>
+    (function () {
+        var bar = document.querySelector('.quota-bar[data-quota]');
+        if (bar) {
+            var used = parseInt(bar.dataset.used, 10) || 0;
+            var quota = parseInt(bar.dataset.quota, 10) || 1;
+            var pct = Math.min(100, Math.round(used / quota * 100));
+            bar.querySelector('i').style.width = pct + '%';
+            if (pct >= 90) bar.classList.add('warn');
+            if (pct >= 100) bar.classList.add('over');
+        }
+    })();
+    </script>
 </body>
 </html>
 {{end}}

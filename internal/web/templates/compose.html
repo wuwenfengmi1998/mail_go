@@ -4,63 +4,67 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>撰写邮件 - MailGo</title>
+    <title>写信 - MailGo</title>
     <link href="https://cdn.quilljs.com/1.3.7/quill.snow.css" rel="stylesheet">
     {{template "styles" .}}
 </head>
-<body>
+<body class="page-compose">
     {{template "navbar" .}}
-    <div class="container">
-        <div class="clearfix">
-            <div class="sidebar">
-                <a href="/inbox" class="{{if eq .activeFolder `inbox`}}active{{end}}">收件箱</a>
-                <a href="/drafts" class="{{if eq .activeFolder `drafts`}}active{{end}}">草稿箱</a>
-                <a href="/sent" class="{{if eq .activeFolder `sent`}}active{{end}}">发件箱</a>
-                <a href="/compose" class="{{if eq .activeFolder `compose`}}active{{end}}">撰写邮件</a>
-                <a href="/settings" class="{{if eq .activeFolder `settings`}}active{{end}}">设置</a>
+    <div class="app-body">
+        {{template "sidebar" .}}
+        <main class="mail-main">
+            <div class="compose-toolbar">
+                <button type="submit" form="compose-form" class="btn btn-primary">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                    发送
+                </button>
+                <label class="tb-btn" style="cursor:pointer;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                    附件
+                    <input type="file" name="attachments" id="attach-input" multiple style="display:none;">
+                </label>
+                <a href="/inbox" class="tb-btn">取消</a>
+                <div class="toolbar-spacer"></div>
+                <span class="page-info">撰写新邮件</span>
             </div>
-            <div class="content">
-                <div class="card">
-                    <h2 style="margin-bottom:16px;">撰写邮件</h2>
-                    {{if .error}}<div class="alert alert-error">{{.error}}</div>{{end}}
-                    <form method="POST" action="/compose" enctype="multipart/form-data">
-                        <div class="form-group">
-                            <label>收件人</label>
-                            <input type="email" name="to" required value="{{.to}}" placeholder="user@example.com">
-                        </div>
-                        <div class="form-group">
-                            <label>抄送（可选）</label>
-                            <input type="text" name="cc" value="{{.cc}}" placeholder="cc@example.com">
-                        </div>
-                        <div class="form-group">
-                            <label>主题</label>
-                            <input type="text" name="subject" value="{{.subject}}" placeholder="邮件主题">
-                        </div>
-                        <div class="form-group">
-                            <label>正文</label>
-                            <div id="editor" style="height:300px;"></div>
-                            <input type="hidden" name="body" id="body-hidden">
-                            <input type="hidden" name="html_body" id="html-body-hidden">
-                        </div>
-                        <div class="form-group">
-                            <label>附件</label>
-                            <input type="file" name="attachments" multiple>
-                        </div>
-                        <div class="form-group" style="color:#7f8c8d;font-size:12px;">
-                            配额: {{formatBytes .usedBytes}} / {{formatBytes .quotaBytes}}
-                        </div>
-                        <button type="submit" class="btn btn-primary">发送邮件</button>
-                        <a href="/inbox" class="btn" style="margin-left:8px;">取消</a>
-                    </form>
+
+            {{if .error}}<div class="alert alert-error" style="margin:12px 18px 0;">{{.error}}</div>{{end}}
+
+            <form id="compose-form" class="compose-form" method="POST" action="/compose" enctype="multipart/form-data">
+                <div class="compose-field">
+                    <label>收件人</label>
+                    <input type="email" name="to" required value="{{.to}}" placeholder="输入收件人邮箱地址">
                 </div>
-            </div>
-        </div>
+                <div class="compose-field">
+                    <label>抄送</label>
+                    <input type="text" name="cc" value="{{.cc}}" placeholder="多个地址用逗号分隔（可选）">
+                </div>
+                <div class="compose-field">
+                    <label>主题</label>
+                    <input type="text" name="subject" value="{{.subject}}" placeholder="输入邮件主题">
+                </div>
+
+                <div id="attach-chips" class="attach-chips" style="{{if not .attachments}}display:none;{{end}}"></div>
+
+                <div class="editor-wrap">
+                    <div id="editor" data-placeholder="请输入邮件内容..."></div>
+                    <input type="hidden" name="body" id="body-hidden">
+                    <input type="hidden" name="html_body" id="html-body-hidden">
+                </div>
+
+                <div class="compose-footer">
+                    <span>附件配额</span>
+                    <span class="quota-bar" id="quota-bar" data-used="{{.usedBytes}}" data-quota="{{.quotaBytes}}"><i></i></span>
+                    <span id="quota-text">{{formatBytes .usedBytes}} / {{formatBytes .quotaBytes}}</span>
+                </div>
+            </form>
+        </main>
     </div>
     <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
     <script>
     var quill = new Quill('#editor', {
         theme: 'snow',
-        placeholder: '请输入邮件内容...',
+        placeholder: document.getElementById('editor').dataset.placeholder || '请输入邮件内容...',
         modules: {
             toolbar: [
                 [{ 'header': [1, 2, 3, false] }],
@@ -72,13 +76,54 @@
             ]
         }
     });
-    document.querySelector('form').addEventListener('submit', function() {
-        document.getElementById('body-hidden').value = quill.getText();
-        document.getElementById('html-body-hidden').value = quill.root.innerHTML;
-    });
     {{if .bodyContent}}
     quill.root.innerHTML = {{.bodyContent | safeJS}};
     {{end}}
+
+    document.getElementById('compose-form').addEventListener('submit', function () {
+        document.getElementById('body-hidden').value = quill.getText();
+        document.getElementById('html-body-hidden').value = quill.root.innerHTML;
+    });
+
+    // 附件选择预览
+    var attachInput = document.getElementById('attach-input');
+    var chipsBox = document.getElementById('attach-chips');
+    var files = [];
+    function renderChips() {
+        chipsBox.innerHTML = '';
+        chipsBox.style.display = files.length ? 'flex' : 'none';
+        files.forEach(function (f, i) {
+            var chip = document.createElement('span');
+            chip.className = 'attach-chip';
+            chip.innerHTML = '📎 ' + f.name + ' (' + (f.size / 1024).toFixed(1) + ' KB)' +
+                '<button type="button" class="chip-del" data-i="' + i + '" title="移除">✕</button>';
+            chipsBox.appendChild(chip);
+        });
+    }
+    attachInput.addEventListener('change', function () {
+        files = Array.prototype.slice.call(attachInput.files);
+        renderChips();
+    });
+    chipsBox.addEventListener('click', function (e) {
+        var del = e.target.closest('.chip-del');
+        if (!del) return;
+        files.splice(parseInt(del.dataset.i, 10), 1);
+        var dt = new DataTransfer();
+        files.forEach(function (f) { dt.items.add(f); });
+        attachInput.files = dt.files;
+        renderChips();
+    });
+
+    // 配额进度条
+    var bar = document.getElementById('quota-bar');
+    if (bar) {
+        var used = parseInt(bar.dataset.used, 10) || 0;
+        var quota = parseInt(bar.dataset.quota, 10) || 1;
+        var pct = Math.min(100, Math.round(used / quota * 100));
+        bar.querySelector('i').style.width = pct + '%';
+        if (pct >= 90) bar.classList.add('warn');
+        if (pct >= 100) bar.classList.add('over');
+    }
     </script>
 </body>
 </html>
