@@ -363,7 +363,20 @@ func readTLSCert(path string) string {
 	return string(data)
 }
 
+// normalizePEM 统一 PEM 文本的换行为 LF：浏览器提交 textarea 时会把
+// 换行规范为 CRLF，而证书文件里通常是 LF，直接比较会误判“证书已修改”
+// （表现为：私钥留空保留现有私钥时仍报“必须同时填写”）。
+func normalizePEM(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	return s
+}
+
 func (h *AdminHandler) handleDomainTLSUpdate(domain *db.Domain, publicCert, privateKey string) error {
+	// 归一化换行，保证与磁盘文件一致，避免表单往返时被误判为已修改
+	publicCert = normalizePEM(strings.TrimSpace(publicCert))
+	privateKey = normalizePEM(strings.TrimSpace(privateKey))
+
 	if !domain.TlsEnabled {
 		return nil
 	}
@@ -375,7 +388,7 @@ func (h *AdminHandler) handleDomainTLSUpdate(domain *db.Domain, publicCert, priv
 		}
 		return fmt.Errorf("启用 TLS 时必须填写 TLS 私钥和公钥证书")
 	}
-	if hasExistingCert && privateKey == "" && strings.TrimSpace(readTLSCert(domain.TlsCertPath)) == publicCert {
+	if hasExistingCert && privateKey == "" && normalizePEM(strings.TrimSpace(readTLSCert(domain.TlsCertPath))) == publicCert {
 		return nil
 	}
 	if publicCert == "" || privateKey == "" {
