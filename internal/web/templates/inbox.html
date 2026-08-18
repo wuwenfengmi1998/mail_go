@@ -82,75 +82,7 @@
             </div>
         </main>
     </div>
-    <script>
-    (function () {
-        var searchInput = document.getElementById('mail-search');
-        var rows = Array.prototype.slice.call(document.querySelectorAll('.mail-row'));
-        var selectAll = document.getElementById('select-all');
-        var btnDelete = document.getElementById('btn-delete');
-
-        // 行点击跳转（复选框除外）
-        rows.forEach(function (row) {
-            row.addEventListener('click', function (e) {
-                if (e.target.closest('.cell-check')) return;
-                window.location.href = row.querySelector('.cell-subject').getAttribute('href');
-            });
-        });
-
-        // 全选
-        selectAll && selectAll.addEventListener('change', function () {
-            rows.forEach(function (row) {
-                var cb = row.querySelector('.row-check');
-                cb.checked = selectAll.checked;
-                row.classList.toggle('selected', cb.checked);
-            });
-            updateDeleteState();
-        });
-        rows.forEach(function (row) {
-            var cb = row.querySelector('.row-check');
-            cb.addEventListener('change', function () {
-                row.classList.toggle('selected', cb.checked);
-                if (!cb.checked && selectAll) selectAll.checked = false;
-                updateDeleteState();
-            });
-        });
-
-        function updateDeleteState() {
-            if (!btnDelete) return;
-            var n = rows.filter(function (r) { return r.querySelector('.row-check').checked; }).length;
-            btnDelete.disabled = n === 0;
-        }
-
-        // 批量删除
-        btnDelete && btnDelete.addEventListener('click', function () {
-            var ids = rows.filter(function (r) { return r.querySelector('.row-check').checked; })
-                          .map(function (r) { return r.dataset.id; });
-            if (!ids.length) return;
-            if (!confirm('确定要删除选中的 ' + ids.length + ' 封邮件吗？')) return;
-            var done = 0;
-            ids.forEach(function (id) {
-                var fd = new FormData();
-                fd.append('_method', 'DELETE');
-                fetch('/mail/delete/' + id, { method: 'POST', body: fd })
-                    .then(function () { if (++done === ids.length) window.location.reload(); })
-                    .catch(function () { if (++done === ids.length) window.location.reload(); });
-            });
-        });
-
-        // 刷新
-        var btnRefresh = document.getElementById('btn-refresh');
-        btnRefresh && btnRefresh.addEventListener('click', function () { window.location.reload(); });
-
-        // 搜索过滤（发件人 / 主题 / 摘要）
-        searchInput && searchInput.addEventListener('input', function () {
-            var q = searchInput.value.trim().toLowerCase();
-            rows.forEach(function (row) {
-                var text = row.textContent.toLowerCase();
-                row.style.display = (!q || text.indexOf(q) !== -1) ? '' : 'none';
-            });
-        });
-    })();
-    </script>
+    {{template "listjs" .}}
 </body>
 </html>
 {{end}}
