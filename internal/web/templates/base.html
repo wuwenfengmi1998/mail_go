@@ -31,6 +31,7 @@
     input, textarea, select, button { font-family: inherit; }
     input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--primary); cursor: pointer; flex-shrink: 0; }
     svg { flex-shrink: 0; }
+    a, button { touch-action: manipulation; }
 
     /* ---------- 顶部导航栏 ---------- */
     .topbar {
@@ -323,6 +324,105 @@
     .sidebar a { display: block; padding: 9px 14px; color: var(--text-2); text-decoration: none; border-radius: 6px; margin-bottom: 2px; font-size: 13.5px; }
     .sidebar a:hover, .sidebar a.active { background: var(--primary-soft); color: var(--primary); }
     .content { margin-left: 220px; }
+    .settings-main { padding: 24px; background: var(--sidebar-bg); }
+
+    /* ===== 移动端适配（≤767px） ===== */
+    @media (max-width: 767px) {
+        :root { --topbar-h: 50px; }
+
+        /* 顶栏：紧凑单行 + 列表页搜索框下移为第二行 */
+        .topbar { height: auto; min-height: 50px; padding: 8px 12px; gap: 8px; flex-wrap: wrap; }
+        .logo-icon { width: 30px; height: 30px; font-size: 15px; border-radius: 8px; }
+        .logo-text { font-size: 17px; }
+        .logo-text em { display: none; }
+        .topbar-search { flex: 1 1 100%; order: 9; border-radius: 8px; }
+        body.page-list { --topbar-h: 96px; }
+        .topbar-right { gap: 12px; }
+        .user-email { display: none; }
+
+        /* 左侧文件夹栏 → 底部导航条 */
+        .mail-sidebar {
+            position: fixed; top: auto; bottom: 0; left: 0; right: 0;
+            width: 100%; height: auto; min-height: 58px;
+            padding: 4px 8px calc(4px + env(safe-area-inset-bottom));
+            flex-direction: row; align-items: center; gap: 2px;
+            background: #fff; border-top: 1px solid var(--border); border-right: none;
+            z-index: 90; box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.04);
+        }
+        .folder-nav { display: contents; }
+        .folder {
+            flex: 1; flex-direction: column; justify-content: center; gap: 2px;
+            height: 46px; padding: 0; border-radius: 8px; font-size: 10.5px;
+            position: relative;
+        }
+        .folder-nav .folder:nth-child(1) { order: 1; }
+        .folder-nav .folder:nth-child(2) { order: 2; }
+        .folder-nav .folder:nth-child(3) { order: 4; }
+        .folder svg { width: 19px; height: 19px; }
+        .folder.active::before { display: none; }
+        .folder .badge {
+            position: absolute; top: 1px; right: calc(50% - 20px);
+            min-width: 16px; height: 16px; padding: 0 4px;
+            font-size: 10px; line-height: 16px; border-radius: 8px;
+        }
+        .folder .count { display: none; }
+        .compose-btn {
+            width: 46px; height: 46px; padding: 0; border-radius: 50%;
+            margin: 0 4px; flex-shrink: 0; order: 3;
+            font-size: 0; box-shadow: 0 3px 10px rgba(255, 149, 0, 0.5);
+            transform: translateY(-10px);
+        }
+        .compose-btn:hover { transform: translateY(-10px); }
+        .compose-btn svg { width: 20px; height: 20px; }
+        .sidebar-footer {
+            margin: 0; border: none; padding: 0;
+            flex-direction: row; gap: 2px; order: 5;
+        }
+        .mail-main { padding-bottom: calc(58px + env(safe-area-inset-bottom)); }
+
+        /* 邮件列表 */
+        .list-toolbar { padding: 8px 10px; gap: 8px; }
+        .check-all { font-size: 12.5px; }
+        .tb-btn { height: 30px; padding: 0 9px; font-size: 12.5px; }
+        .page-info { font-size: 12px; }
+        .mail-row { padding: 0 10px; height: 60px; gap: 8px; }
+        .avatar { width: 32px; height: 32px; font-size: 13px; }
+        .cell-from { width: 88px; font-size: 13px; }
+        .cell-subject-wrap { flex: 1; min-width: 0; }
+        .cell-subject { font-size: 13px; }
+        .cell-snippet { display: none; }
+        .cell-date { width: 56px; font-size: 11.5px; }
+        .row-del { opacity: 1; }
+        .list-footer { padding: 8px 10px; }
+        .pager { margin-left: auto; gap: 4px; }
+
+        /* 阅读页 */
+        .view-toolbar { padding: 8px 10px; gap: 8px; }
+        .mail-head { padding: 16px 16px 0; }
+        .mail-title { font-size: 17px; }
+        .mail-from-row { gap: 10px; margin: 12px 0 14px; }
+        .mail-body-wrap { padding: 14px 16px; }
+        .mail-body-iframe { min-height: 260px; }
+        .view-actions { padding: 14px 16px 20px; flex-wrap: wrap; }
+
+        /* 写信页 */
+        .compose-toolbar { padding: 8px 10px; gap: 8px; }
+        .compose-field { padding: 8px 14px; gap: 8px; }
+        .compose-field label { width: 44px; font-size: 13px; }
+        .compose-footer { padding: 10px 14px; flex-wrap: wrap; }
+        .quota-bar { width: 130px; }
+
+        /* 设置页 */
+        .settings-main { padding: 14px; }
+
+        /* 管理后台 */
+        .container { padding: 0 12px; margin: 12px auto; }
+        .sidebar { float: none; width: 100%; margin-bottom: 12px; display: flex; flex-wrap: wrap; gap: 2px; padding: 6px; }
+        .sidebar a { margin: 0; padding: 8px 12px; font-size: 13px; }
+        .content { margin-left: 0; overflow-x: auto; }
+        th, td { white-space: nowrap; }
+        .stat-card { width: calc(50% - 10px); margin: 0 0 10px; }
+    }
 </style>
 {{end}}
 

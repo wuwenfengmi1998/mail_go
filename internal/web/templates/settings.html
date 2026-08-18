@@ -3,7 +3,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>设置 - MailGo</title>
     {{template "styles" .}}
 </head>
@@ -11,7 +11,7 @@
     {{template "navbar" .}}
     <div class="app-body">
         {{template "sidebar" .}}
-        <main class="mail-main" style="padding:24px;background:#f6f8fc;">
+        <main class="mail-main settings-main">
             {{if .error}}<div class="alert alert-error">{{.error}}</div>{{end}}
             {{if .success}}<div class="alert alert-success">{{.success}}</div>{{end}}
 
