@@ -38,7 +38,7 @@
                         <div class="mail-from-name">{{mailName (decodeHeader .message.FromAddr)}}</div>
                         <div class="mail-from-addr" title="{{decodeHeader .message.FromAddr}}">{{mailEmail .message.FromAddr}}</div>
                     </div>
-                    <span class="mail-date">{{.message.Date.Format "2006-01-02 15:04:05"}}</span>
+                    <span class="mail-date">{{(localTime .message.Date).Format "2006-01-02 15:04:05"}}</span>
                 </div>
                 {{if .message.CcAddr}}
                 <div class="mail-from-addr" style="margin:-8px 0 16px 48px;">

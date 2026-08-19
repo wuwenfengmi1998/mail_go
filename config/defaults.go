@@ -39,6 +39,9 @@ const (
 // DefaultProtocolLogKeepDays 是 SMTP/IMAP/POP3 协议调用日志的默认保留天数。
 const DefaultProtocolLogKeepDays = 30
 
+// DefaultTimezone 是 Web 界面显示时间的默认 IANA 时区（北京时间）。
+const DefaultTimezone = "Asia/Shanghai"
+
 // Outbound delivery concurrency defaults.
 const (
 	// DefaultOutboundWorkers 并发投递 worker 数（0/1 为串行）。

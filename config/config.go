@@ -39,6 +39,10 @@ type WebConfig struct {
 	// ProtocolLogKeepDays SMTP/IMAP/POP3 协议调用日志保留天数，
 	// 超过该天数的记录会被后台任务自动清理。
 	ProtocolLogKeepDays int `toml:"protocol_log_keep_days"`
+	// Timezone Web 界面显示时间所用的 IANA 时区（如 "Asia/Shanghai"）。
+	// 为空时使用服务器本地时区。邮件日期在库中统一为 UTC 存储，
+	// 展示时按此配置转换。
+	Timezone string `toml:"timezone"`
 }
 
 // SecretKeyEnvVar 是覆盖会话签名密钥的环境变量名。
@@ -212,6 +216,7 @@ func defaultConfig() *Config {
 			Addr:                DefaultWebPort,
 			CookieSecure:        true,
 			ProtocolLogKeepDays: DefaultProtocolLogKeepDays,
+			Timezone:            DefaultTimezone,
 		},
 		SMTP: SMTPConfig{
 			Addr:           fmt.Sprintf(":%d", DefaultSMTPPort),
@@ -280,6 +285,9 @@ func mergeDefaults(cfg *Config, defaults *Config) *Config {
 	}
 	if cfg.Web.ProtocolLogKeepDays == 0 {
 		cfg.Web.ProtocolLogKeepDays = defaults.Web.ProtocolLogKeepDays
+	}
+	if cfg.Web.Timezone == "" {
+		cfg.Web.Timezone = defaults.Web.Timezone
 	}
 	if cfg.SMTP.Addr == "" {
 		cfg.SMTP.Addr = defaults.SMTP.Addr
