@@ -279,17 +279,6 @@ func (s *imapSession) recordLogin(ip, username string, success bool, failReason,
 	return entry.ID
 }
 
-// systemMailboxes 是系统支持的全部文件夹。
-var systemMailboxes = []struct {
-	name  string
-	attrs []imap.MailboxAttr
-}{
-	{"INBOX", nil},
-	{"Sent", []imap.MailboxAttr{imap.MailboxAttrSent}},
-	{"Drafts", []imap.MailboxAttr{imap.MailboxAttrDrafts}},
-	{"Trash", []imap.MailboxAttr{imap.MailboxAttrTrash}},
-}
-
 // matchPattern 按 RFC 3501 LIST wildcard 语义匹配（* 任意、% 不跨分隔符）。
 // INBOX 大小写不敏感，其余文件夹按系统定义大小写精确匹配。
 func matchPattern(name, pattern string) bool {
@@ -326,16 +315,24 @@ func matchAnyPattern(name string, patterns []string) bool {
 	return false
 }
 
-// List 返回系统文件夹列表（LSUB 同样返回全部——订阅状态恒为已订阅）。
+// List 返回用户文件夹列表（数据源为 mailboxes 表，与 Web 侧边栏同源）。
+// LSUB（options.SelectSubscribed）只返回已订阅文件夹。
 func (s *imapSession) List(w *imapserver.ListWriter, ref string, patterns []string, options *imap.ListOptions) error {
-	for _, mb := range systemMailboxes {
-		if !matchAnyPattern(mb.name, patterns) {
+	mbs, err := s.srv.svc.ListAll(s.currentUserID())
+	if err != nil {
+		return err
+	}
+	for _, mb := range mbs {
+		if options.SelectSubscribed && !mb.IsSubscribed {
+			continue
+		}
+		if !matchAnyPattern(mb.Name, patterns) {
 			continue
 		}
 		data := &imap.ListData{
-			Attrs:   mb.attrs,
+			Attrs:   mailboxAttrs(mb),
 			Delim:   '/',
-			Mailbox: mb.name,
+			Mailbox: mb.Name,
 		}
 		if err := w.WriteList(data); err != nil {
 			return err
@@ -344,59 +341,51 @@ func (s *imapSession) List(w *imapserver.ListWriter, ref string, patterns []stri
 	return nil
 }
 
-// Create 不支持。
+// Create 创建自定义文件夹（已存在时返回 NO）。
 func (s *imapSession) Create(mailbox string, options *imap.CreateOptions) error {
-	return &imap.Error{Type: imap.StatusResponseTypeNo, Text: "mailbox creation not supported"}
+	return imapNoResponse(s.srv.svc.Create(s.currentUserID(), mailbox))
 }
 
-// Delete 不支持。
+// Delete 删除空的自定义文件夹（系统文件夹拒绝）。
 func (s *imapSession) Delete(mailbox string) error {
-	return &imap.Error{Type: imap.StatusResponseTypeNo, Text: "mailbox deletion not supported"}
+	return imapNoResponse(s.srv.svc.Delete(s.currentUserID(), mailbox))
 }
 
-// Rename 不支持。
+// Rename 重命名自定义文件夹（系统文件夹拒绝）。
 func (s *imapSession) Rename(mailbox, newName string, options *imap.RenameOptions) error {
-	return &imap.Error{Type: imap.StatusResponseTypeNo, Text: "mailbox rename not supported"}
+	return imapNoResponse(s.srv.svc.Rename(s.currentUserID(), mailbox, newName))
 }
 
-// Subscribe 恒为已订阅（no-op）。
+// Subscribe 订阅文件夹（影响 LSUB 过滤）。
 func (s *imapSession) Subscribe(mailbox string) error {
-	return nil
+	return imapNoResponse(s.srv.svc.SetSubscribed(s.currentUserID(), mailbox, true))
 }
 
-// Unsubscribe no-op。
+// Unsubscribe 退订文件夹。
 func (s *imapSession) Unsubscribe(mailbox string) error {
-	return nil
+	return imapNoResponse(s.srv.svc.SetSubscribed(s.currentUserID(), mailbox, false))
+}
+
+// imapNoResponse 把服务层错误映射为 IMAP NO 响应。
+func imapNoResponse(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &imap.Error{Type: imap.StatusResponseTypeNo, Text: err.Error()}
 }
 
 // ---------- 选中状态 ----------
 
 // Select 选中邮箱：登记 mailboxHub 会话，返回状态数据。
 func (s *imapSession) Select(mailbox string, options *imap.SelectOptions) (*imap.SelectData, error) {
-	name, ok := canonicalMailboxName(mailbox)
+	name, ok := s.canonicalMailboxName(mailbox)
 	if !ok {
 		return nil, &imap.Error{Type: imap.StatusResponseTypeNo, Text: "No such mailbox"}
 	}
 
-	userID := s.currentUserID()
-	msgs, err := s.srv.stores.Mails.ListAllByUserAndFolder(userID, name)
+	data, err := s.srv.svc.Select(s.currentUserID(), name)
 	if err != nil {
 		return nil, err
-	}
-	var unseen uint32
-	for i := range msgs {
-		if !msgs[i].IsRead {
-			unseen++
-		}
-	}
-	maxID, err := s.srv.stores.Mails.MaxIDByUserAndFolder(userID, name)
-	if err != nil {
-		return nil, err
-	}
-	uidValidity, err := s.srv.stores.MailboxState.UidValidity(userID, name)
-	if err != nil {
-		log.Printf("IMAP: 获取 UIDVALIDITY 失败 folder=%s: %v", name, err)
-		uidValidity = 1
 	}
 
 	// 换绑推送（若此前已选中，先注销旧邮箱）
@@ -416,15 +405,7 @@ func (s *imapSession) Select(mailbox string, options *imap.SelectOptions) (*imap
 	s.hub = hub
 	s.mu.Unlock()
 
-	flags := []imap.Flag{imap.FlagAnswered, imap.FlagFlagged, imap.FlagDeleted, imap.FlagSeen, imap.FlagDraft}
-	return &imap.SelectData{
-		Flags:          flags,
-		PermanentFlags: append(flags, imap.FlagWildcard),
-		NumMessages:    uint32(len(msgs)),
-		NumRecent:      0,
-		UIDNext:        imap.UID(maxID + 1),
-		UIDValidity:    uidValidity,
-	}, nil
+	return data, nil
 }
 
 // Unselect 取消选中：注销 mailboxHub 会话。
@@ -444,63 +425,11 @@ func (s *imapSession) Unselect() error {
 
 // Status 返回邮箱状态（计数/未读/UIDNEXT/UIDVALIDITY/已删除标记数/大小）。
 func (s *imapSession) Status(mailbox string, options *imap.StatusOptions) (*imap.StatusData, error) {
-	name, ok := canonicalMailboxName(mailbox)
+	name, ok := s.canonicalMailboxName(mailbox)
 	if !ok {
 		return nil, &imap.Error{Type: imap.StatusResponseTypeNo, Text: "No such mailbox"}
 	}
-	userID := s.currentUserID()
-
-	msgs, err := s.srv.stores.Mails.ListAllByUserAndFolder(userID, name)
-	if err != nil {
-		return nil, err
-	}
-	data := &imap.StatusData{Mailbox: name}
-
-	if options.NumMessages || options.NumUnseen || options.NumDeleted || options.Size {
-		var unseen, deleted uint32
-		var size int64
-		for i := range msgs {
-			if !msgs[i].IsRead {
-				unseen++
-			}
-			if msgs[i].IsDeleted {
-				deleted++
-			}
-			size += int64(len(messageRawData(&msgs[i])))
-		}
-		if options.NumMessages {
-			n := uint32(len(msgs))
-			data.NumMessages = &n
-		}
-		if options.NumUnseen {
-			data.NumUnseen = &unseen
-		}
-		if options.NumDeleted {
-			data.NumDeleted = &deleted
-		}
-		if options.Size {
-			data.Size = &size
-		}
-	}
-	if options.NumRecent {
-		zero := uint32(0)
-		data.NumRecent = &zero
-	}
-	if options.UIDNext {
-		maxID, err := s.srv.stores.Mails.MaxIDByUserAndFolder(userID, name)
-		if err != nil {
-			return nil, err
-		}
-		data.UIDNext = imap.UID(maxID + 1)
-	}
-	if options.UIDValidity {
-		uidValidity, err := s.srv.stores.MailboxState.UidValidity(userID, name)
-		if err != nil {
-			return nil, err
-		}
-		data.UIDValidity = uidValidity
-	}
-	return data, nil
+	return s.srv.svc.Status(s.currentUserID(), name, options)
 }
 
 // ---------- 消息操作 ----------
@@ -873,7 +802,7 @@ func (s *imapSession) Store(w *imapserver.FetchWriter, numSet imap.NumSet, flags
 
 // Copy 把匹配消息复制到目标文件夹。
 func (s *imapSession) Copy(numSet imap.NumSet, dest string) (*imap.CopyData, error) {
-	destName, ok := canonicalMailboxName(dest)
+	destName, ok := s.canonicalMailboxName(dest)
 	if !ok {
 		return nil, &imap.Error{Type: imap.StatusResponseTypeNo, Text: "No such mailbox"}
 	}
@@ -944,7 +873,7 @@ func (s *imapSession) Move(w *imapserver.MoveWriter, numSet imap.NumSet, dest st
 	if s.isReadOnly() {
 		return &imap.Error{Type: imap.StatusResponseTypeNo, Text: "Mailbox is read-only"}
 	}
-	destName, ok := canonicalMailboxName(dest)
+	destName, ok := s.canonicalMailboxName(dest)
 	if !ok {
 		return &imap.Error{Type: imap.StatusResponseTypeNo, Text: "No such mailbox"}
 	}
@@ -1072,7 +1001,7 @@ func (s *imapSession) Expunge(w *imapserver.ExpungeWriter, uids *imap.UIDSet) er
 
 // Append 追加一封新邮件（IMAP APPEND）。
 func (s *imapSession) Append(mailbox string, r imap.LiteralReader, options *imap.AppendOptions) (*imap.AppendData, error) {
-	name, ok := canonicalMailboxName(mailbox)
+	name, ok := s.canonicalMailboxName(mailbox)
 	if !ok {
 		return nil, &imap.Error{Type: imap.StatusResponseTypeNo, Text: "No such mailbox"}
 	}
@@ -1235,20 +1164,10 @@ func ptrU32(v uint32) *uint32 {
 
 // ---------- Helper functions ----------
 
-// canonicalMailboxName 规范化邮箱名。
-func canonicalMailboxName(name string) (string, bool) {
-	switch strings.ToUpper(strings.TrimSpace(name)) {
-	case "INBOX":
-		return "INBOX", true
-	case "SENT":
-		return "Sent", true
-	case "DRAFTS":
-		return "Drafts", true
-	case "TRASH":
-		return "Trash", true
-	default:
-		return "", false
-	}
+// canonicalMailboxName 规范化邮箱名（走 MailboxService：INBOX 大小写
+// 不敏感，其余按 mailboxes 表中实际名称匹配）。
+func (s *imapSession) canonicalMailboxName(name string) (string, bool) {
+	return s.srv.svc.Canonical(s.currentUserID(), name)
 }
 
 // flagsOf 按数据库状态生成 IMAP 标志列表。

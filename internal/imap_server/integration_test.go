@@ -28,7 +28,7 @@ func startIntegrationServer(t *testing.T) (*store.Stores, string) {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := gdb.AutoMigrate(&db.User{}, &db.Domain{}, &db.Message{}, &db.ProtocolLog{}, &db.BanEntry{}, &db.MailboxState{}); err != nil {
+	if err := gdb.AutoMigrate(&db.User{}, &db.Domain{}, &db.Message{}, &db.ProtocolLog{}, &db.BanEntry{}, &db.MailboxState{}, &db.Mailbox{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	stores := store.NewStores(gdb)
@@ -376,4 +376,126 @@ func TestUidMoveFlow(t *testing.T) {
 	if msg.Folder != "Trash" {
 		t.Fatalf("moved msg folder = %q, want Trash", msg.Folder)
 	}
+}
+
+// TestListDataDriven 验证文件夹目录由 mailboxes 表驱动：LIST 返回
+// 4 个系统文件夹 + CREATE 的自定义文件夹，且带正确的 SPECIAL-USE 属性；
+// DELETE 非空/系统文件夹被拒绝，LSUB 按订阅过滤。
+func TestListDataDriven(t *testing.T) {
+	stores, addr := startIntegrationServer(t)
+
+	c, err := imapclient.DialInsecure(addr, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { c.Logout().Wait() })
+	if err := c.Login("alice@example.com", "secret123").Wait(); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+
+	// LIST：系统文件夹齐全且属性正确
+	datas, err := c.List("", "*", nil).Collect()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	byName := map[string]*imap.ListData{}
+	for _, d := range datas {
+		byName[d.Mailbox] = d
+	}
+	for _, want := range []string{"INBOX", "Sent", "Drafts", "Trash"} {
+		if _, ok := byName[want]; !ok {
+			t.Fatalf("LIST 缺少 %s", want)
+		}
+	}
+	if !containsAttr(byName["Trash"].Attrs, imap.MailboxAttrTrash) {
+		t.Fatalf("Trash attrs = %v, want \\Trash", byName["Trash"].Attrs)
+	}
+	if !containsAttr(byName["Sent"].Attrs, imap.MailboxAttrSent) {
+		t.Fatalf("Sent attrs = %v, want \\Sent", byName["Sent"].Attrs)
+	}
+
+	// CREATE 自定义文件夹 → LIST 立即可见
+	if err := c.Create("工作", nil).Wait(); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	datas2, err := c.List("", "*", nil).Collect()
+	if err != nil {
+		t.Fatalf("list after create: %v", err)
+	}
+	found := false
+	for _, d := range datas2 {
+		if d.Mailbox == "工作" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("CREATE 后的自定义文件夹未出现在 LIST 中")
+	}
+
+	// 重名创建 → NO
+	if err := c.Create("工作", nil).Wait(); err == nil {
+		t.Fatal("重复 CREATE 应返回 NO")
+	}
+
+	// 系统文件夹不可删除
+	if err := c.Delete("Trash").Wait(); err == nil {
+		t.Fatal("删除系统文件夹应返回 NO")
+	}
+
+	// 非空自定义文件夹不可删除
+	ids := seedMailbox(t, stores, 1, 1)
+	if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Copy(imap.UIDSetNum(imap.UID(ids[0])), "工作").Wait(); err != nil {
+		t.Fatalf("copy to custom: %v", err)
+	}
+	if err := c.Delete("工作").Wait(); err == nil {
+		t.Fatal("删除非空文件夹应返回 NO")
+	}
+
+	// RENAME 自定义文件夹
+	if err := c.Rename("工作", "归档", nil).Wait(); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	datas3, err := c.List("", "*", nil).Collect()
+	if err != nil {
+		t.Fatalf("list after rename: %v", err)
+	}
+	renamed := false
+	for _, d := range datas3 {
+		if d.Mailbox == "归档" {
+			renamed = true
+		}
+		if d.Mailbox == "工作" {
+			t.Fatal("旧文件夹名仍出现在 LIST 中")
+		}
+	}
+	if !renamed {
+		t.Fatal("重命名后的文件夹未出现在 LIST 中")
+	}
+
+	// UNSUBSCRIBE → LSUB 不再返回
+	if err := c.Unsubscribe("归档").Wait(); err != nil {
+		t.Fatalf("unsubscribe: %v", err)
+	}
+	lsub, err := c.List("", "*", &imap.ListOptions{SelectSubscribed: true}).Collect()
+	if err != nil {
+		t.Fatalf("lsub: %v", err)
+	}
+	for _, d := range lsub {
+		if d.Mailbox == "归档" {
+			t.Fatal("退订后的文件夹不应出现在 LSUB 中")
+		}
+	}
+}
+
+// containsAttr 判断属性列表是否包含目标属性。
+func containsAttr(attrs []imap.MailboxAttr, want imap.MailboxAttr) bool {
+	for _, a := range attrs {
+		if a == want {
+			return true
+		}
+	}
+	return false
 }

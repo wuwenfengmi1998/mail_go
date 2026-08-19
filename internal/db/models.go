@@ -177,6 +177,39 @@ func (Attachment) TableName() string {
 	return "attachments"
 }
 
+// SystemMailbox 定义一个系统预置文件夹（RFC 6154 SPECIAL-USE 角色）。
+type SystemMailbox struct {
+	Name       string // 规范名（INBOX 大小写不敏感）
+	SpecialUse string // Sent / Drafts / Trash；INBOX 为 ""
+}
+
+// SystemMailboxes 是系统预置文件夹清单：IMAP LIST 与 Web 侧边栏
+// 共用此定义，保证「IMAP 返回什么，Web 就显示什么」。
+var SystemMailboxes = []SystemMailbox{
+	{Name: "INBOX", SpecialUse: ""},
+	{Name: "Sent", SpecialUse: "Sent"},
+	{Name: "Drafts", SpecialUse: "Drafts"},
+	{Name: "Trash", SpecialUse: "Trash"},
+}
+
+// Mailbox 表示一个用户文件夹（IMAP mailbox / Web 侧边栏条目）。
+// 系统文件夹在首次访问时由 MailboxStore.EnsureSystem 幂等创建；
+// 自定义文件夹经 IMAP CREATE 创建。
+type Mailbox struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	UserID       uint      `gorm:"uniqueIndex:idx_mailbox_user_name;not null" json:"user_id"`
+	Name         string    `gorm:"size:64;uniqueIndex:idx_mailbox_user_name;not null" json:"name"`
+	SpecialUse   string    `gorm:"size:16" json:"special_use"` // 自定义文件夹为空
+	IsSubscribed bool      `gorm:"default:true" json:"is_subscribed"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// TableName specifies the table name for Mailbox.
+func (Mailbox) TableName() string {
+	return "mailboxes"
+}
+
 // MailboxState 记录每个邮箱（用户+文件夹）的持久化 IMAP 状态。
 // UidValidity 在首次访问时随机生成并持久化：数据库重建（消息 ID 空间
 // 变化）后该值随之改变，客户端（Thunderbird 等）会据此丢弃本地缓存

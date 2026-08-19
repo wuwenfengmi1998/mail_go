@@ -353,11 +353,12 @@
         .folder {
             flex: 1; flex-direction: column; justify-content: center; gap: 2px;
             height: 46px; padding: 0; border-radius: 8px; font-size: 10.5px;
-            position: relative;
+            position: relative; order: 7; /* 自定义文件夹排在最后 */
         }
         .folder-nav .folder:nth-child(1) { order: 1; }
         .folder-nav .folder:nth-child(2) { order: 2; }
         .folder-nav .folder:nth-child(3) { order: 4; }
+        .folder-nav .folder:nth-child(4) { order: 6; }
         .folder svg { width: 19px; height: 19px; }
         .folder.active::before { display: none; }
         .folder .badge {
@@ -376,7 +377,7 @@
         .compose-btn svg { width: 20px; height: 20px; }
         .sidebar-footer {
             margin: 0; border: none; padding: 0;
-            flex-direction: row; gap: 2px; order: 5;
+            flex-direction: row; gap: 2px; order: 8;
         }
         .mail-main { padding-bottom: calc(58px + env(safe-area-inset-bottom)); }
 
@@ -463,21 +464,25 @@
         写信
     </a>
     <nav class="folder-nav">
-        <a class="folder {{if eq .activeFolder `inbox`}}active{{end}}" href="/inbox">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
-            收件箱
-            {{if .inboxUnread}}<span class="badge">{{.inboxUnread}}</span>{{end}}
-        </a>
-        <a class="folder {{if eq .activeFolder `drafts`}}active{{end}}" href="/drafts">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-            草稿箱
-            {{if .draftsTotal}}<span class="count">{{.draftsTotal}}</span>{{end}}
-        </a>
-        <a class="folder {{if eq .activeFolder `sent`}}active{{end}}" href="/sent">
+        {{range .folders}}
+        <a class="folder {{if eq $.activeFolder .Name}}active{{end}}" href="/folder/{{urlPath .Name}}">
+            {{if eq .SpecialUse "Sent"}}
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-            已发送
-            {{if .sentTotal}}<span class="count">{{.sentTotal}}</span>{{end}}
+            {{else if eq .SpecialUse "Drafts"}}
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            {{else if eq .SpecialUse "Trash"}}
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            {{else if eq .Name "INBOX"}}
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+            {{else}}
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            {{end}}
+            {{folderLabel .Name}}
+            {{if eq .Name "INBOX"}}
+            {{if .Unseen}}<span class="badge">{{.Unseen}}</span>{{end}}
+            {{else if .Total}}<span class="count">{{.Total}}</span>{{end}}
         </a>
+        {{end}}
     </nav>
     <div class="sidebar-footer">
         {{if .currentUser.IsAdmin}}

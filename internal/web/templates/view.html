@@ -21,6 +21,21 @@
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
                     回复
                 </a>
+                {{if .inTrash}}
+                <form method="POST" action="/mail/restore/{{.message.ID}}" style="display:inline;">
+                    <button type="submit" class="tb-btn">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                        恢复
+                    </button>
+                </form>
+                <form method="POST" action="/mail/purge/{{.message.ID}}" style="display:inline;"
+                      onsubmit="return confirm('确定要彻底删除这封邮件吗？此操作不可恢复。');">
+                    <button type="submit" class="tb-btn danger">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        彻底删除
+                    </button>
+                </form>
+                {{else}}
                 <form method="POST" action="/mail/delete/{{.message.ID}}" style="display:inline;"
                       onsubmit="return confirm('确定要删除这封邮件吗？');">
                     <button type="submit" class="tb-btn danger">
@@ -28,6 +43,7 @@
                         删除
                     </button>
                 </form>
+                {{end}}
             </div>
 
             <div class="mail-head">
@@ -74,6 +90,21 @@
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
                     回复
                 </a>
+                {{if .inTrash}}
+                <form method="POST" action="/mail/restore/{{.message.ID}}" style="display:inline;">
+                    <button type="submit" class="btn">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                        恢复到收件箱
+                    </button>
+                </form>
+                <form method="POST" action="/mail/purge/{{.message.ID}}" style="display:inline;"
+                      onsubmit="return confirm('确定要彻底删除这封邮件吗？此操作不可恢复。');">
+                    <button type="submit" class="btn btn-danger">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        彻底删除
+                    </button>
+                </form>
+                {{else}}
                 <form method="POST" action="/mail/delete/{{.message.ID}}" style="display:inline;"
                       onsubmit="return confirm('确定要删除这封邮件吗？');">
                     <button type="submit" class="btn btn-danger">
@@ -81,6 +112,7 @@
                         删除邮件
                     </button>
                 </form>
+                {{end}}
             </div>
         </main>
     </div>

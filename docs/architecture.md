@@ -413,14 +413,16 @@ type imapMailbox struct {
 | GET | /login | auth.ShowLogin | — | 登录页 |
 | POST | /login | auth.DoLogin | — | 登录提交 |
 | POST | /logout | auth.DoLogout | Auth | 登出 |
-| GET | / | mail.Inbox | Auth | 收件箱（重定向到 /inbox） |
-| GET | /inbox | mail.Inbox | Auth | 收件箱列表 |
-| GET | /inbox/:id | mail.View | Auth | 查看邮件 |
+| GET | / | — | Auth | 收件箱（重定向到 /inbox） |
+| GET | /folder/:name | mail.Folder | Auth | 通用文件夹页（目录与 IMAP LIST 同源） |
+| GET | /folder/:name/:id | mail.View | Auth | 查看文件夹内邮件 |
+| POST | /folder/:name/empty | mail.EmptyFolder | Auth | 清空文件夹 |
+| GET | /inbox /sent /drafts（及 /:id） | — | Auth | 旧路径兼容重定向到 /folder/<name> |
 | GET | /compose | mail.Compose | Auth | 撰写页面 |
 | POST | /compose | mail.DoSend | Auth | 发送邮件 |
-| GET | /sent | mail.Sent | Auth | 发件箱 |
-| GET | /sent/:id | mail.View | Auth | 查看已发送邮件 |
-| POST | /mail/delete/:id | mail.Delete | Auth | 删除邮件 |
+| POST | /mail/delete/:id | mail.Delete | Auth | 删除邮件（移入 Trash；Trash 内为彻底删除） |
+| POST | /mail/restore/:id | mail.Restore | Auth | 恢复邮件到收件箱 |
+| POST | /mail/purge/:id | mail.Purge | Auth | 彻底删除邮件 |
 | POST | /mail/read/:id | mail.MarkRead | Auth | 标记已读 |
 | GET | /attachment/:id | mail.DownloadAttachment | Auth | 下载附件 |
 | GET | /admin | admin.Dashboard | Auth + Admin | 管理后台首页 |
@@ -594,7 +596,7 @@ sequenceDiagram
 
 - 管理后台 handler：域名 CRUD、用户 CRUD、DNS 提示
 - AttachmentStorage：附件文件写入/读取/删除磁盘操作
-- 所有 HTML 模板：base 布局 + login/inbox/compose/sent/view/admin 系列页面
+- 所有 HTML 模板：base 布局 + login/folder/compose/view/admin 系列页面
 - 附件上传（compose 页面多文件上传）+ 下载 handler
 
 **T05: 集成调试 + 安装脚本**

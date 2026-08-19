@@ -16,6 +16,7 @@ type Stores struct {
 	Outbound     OutboundStore
 	ProtocolLogs ProtocolLogStore
 	MailboxState MailboxStateStore
+	Mailboxes    MailboxStore
 }
 
 // NewStores creates a new Stores instance with all GORM-backed implementations.
@@ -29,6 +30,7 @@ func NewStores(database *gorm.DB) *Stores {
 		Outbound:     newOutboundStore(database),
 		ProtocolLogs: newProtocolLogStore(database),
 		MailboxState: newMailboxStateStore(database),
+		Mailboxes:    newMailboxStore(database),
 	}
 }
 
@@ -40,3 +42,4 @@ var _ = db.Attachment{}
 var _ = db.BanEntry{}
 var _ = db.ProtocolLog{}
 var _ = db.MailboxState{}
+var _ = db.Mailbox{}

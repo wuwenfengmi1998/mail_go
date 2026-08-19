@@ -46,7 +46,10 @@ func testTemplateFuncs() template.FuncMap {
 		"initial":      func(s string) string { return "?" },
 		"truncate":     func(s string, n int) string { return s },
 		"shortDate":    func(t time.Time) string { return t.Format("2006-01-02") },
+		"localTime":    func(t time.Time) time.Time { return t },
 		"avatarStyle":  func(s string) string { return "background:#eee;color:#333" },
+		"urlPath":      func(s string) string { return url.PathEscape(s) },
+		"folderLabel":  func(s string) string { return s },
 	}
 }
 

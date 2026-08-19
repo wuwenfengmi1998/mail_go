@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"mail_go/internal/db"
+	"mail_go/internal/imap_server"
 )
 
 func TestRenderAllPages(t *testing.T) {
@@ -46,27 +47,34 @@ func TestRenderAllPages(t *testing.T) {
 		{ID: 2, FileName: "logo.png", FileSize: 128 * 1024},
 	}
 
+	folders := []imap_server.FolderInfo{
+		{Name: "INBOX", SpecialUse: "", Unseen: 2},
+		{Name: "Sent", SpecialUse: "Sent", Total: 3},
+		{Name: "Drafts", SpecialUse: "Drafts", Total: 1},
+		{Name: "Trash", SpecialUse: "Trash", Total: 5},
+		{Name: "工作", SpecialUse: "", Total: 4},
+	}
+
 	cases := []struct {
 		name string
 		data ginH
 	}{
 		{"login", ginH{"error": ""}},
 		{"banned", ginH{"entry": &db.BanEntry{IPAddress: "1.2.3.4", Reason: "登录失败次数过多", FailCount: 8, ExpiresAt: now.Add(20 * time.Minute)}}},
-		{"inbox", ginH{"currentUser": user, "messages": messages, "total": 5, "page": 1, "totalPages": 1, "activeFolder": "inbox", "inboxUnread": int64(2), "draftsTotal": int64(1), "sentTotal": int64(3)}},
-		{"drafts", ginH{"currentUser": user, "messages": messages, "total": 1, "page": 1, "totalPages": 1, "activeFolder": "drafts", "inboxUnread": int64(2), "draftsTotal": int64(1), "sentTotal": int64(3)}},
-		{"sent", ginH{"currentUser": user, "messages": messages, "total": 3, "page": 1, "totalPages": 1, "activeFolder": "sent", "inboxUnread": int64(2), "draftsTotal": int64(1), "sentTotal": int64(3)}},
+		{"folder", ginH{"currentUser": user, "messages": messages, "total": 5, "page": 1, "totalPages": 1, "folder": "INBOX", "activeFolder": "INBOX", "isTrash": false, "folders": folders}},
+		{"folder", ginH{"currentUser": user, "messages": messages, "total": 2, "page": 1, "totalPages": 1, "folder": "Trash", "activeFolder": "Trash", "isTrash": true, "folders": folders}},
 		{"view", ginH{
-			"currentUser": user, "activeFolder": "inbox",
+			"currentUser": user, "activeFolder": "INBOX",
 			"message":     &db.Message{ID: 1, Folder: "INBOX", FromAddr: "=?UTF-8?B?5byg5LiJ?= <zhangsan@lmve.net>", ToAddr: "admin@lmve.net", Subject: "邮件系统部署完成通知", TextBody: "您好！您的 MailGo 邮件系统已成功部署。", HtmlBody: "", Date: now, IsRead: false},
-			"attachments": attachments, "inboxUnread": int64(2), "draftsTotal": int64(1), "sentTotal": int64(3),
+			"attachments": attachments, "inTrash": false, "folders": folders,
 		}},
 		{"compose", ginH{
 			"currentUser": user, "activeFolder": "compose", "error": "",
 			"to": "zhangsan@lmve.net", "subject": "Re: 邮件系统部署完成通知", "bodyContent": "",
 			"usedBytes": int64(5 * 1024 * 1024), "quotaBytes": int64(5 * 1024 * 1024 * 1024),
-			"inboxUnread": int64(2), "draftsTotal": int64(1), "sentTotal": int64(3),
+			"folders": folders,
 		}},
-		{"settings", ginH{"currentUser": user, "activeFolder": "settings", "error": "", "success": "", "inboxUnread": int64(2), "draftsTotal": int64(1), "sentTotal": int64(3)}},
+		{"settings", ginH{"currentUser": user, "activeFolder": "settings", "error": "", "success": "", "folders": folders}},
 		{"admin_dashboard", ginH{"currentUser": user, "activeFolder": "admin", "domainCount": 2, "userCount": 5, "totalMails": 100, "banCount": 1, "inboxCount": 50, "sentCount": 30, "draftsCount": 10, "trashCount": 5, "inboxSize": int64(1024), "sentSize": int64(512), "totalSize": int64(2048), "todayReceived": 3, "todaySent": 2, "weekReceived": 20, "weekSent": 15}},
 		{"admin_bans", ginH{
 			"currentUser": user, "activeFolder": "bans",

@@ -27,7 +27,7 @@ func newTestServer(t *testing.T) (*IMAPServer, *store.Stores) {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := gdb.AutoMigrate(&db.User{}, &db.Domain{}, &db.Message{}, &db.MailboxState{}); err != nil {
+	if err := gdb.AutoMigrate(&db.User{}, &db.Domain{}, &db.Message{}, &db.MailboxState{}, &db.Mailbox{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	stores := store.NewStores(gdb)

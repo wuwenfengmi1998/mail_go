@@ -7,6 +7,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"path/filepath"
@@ -110,6 +111,23 @@ func templateFuncs() template.FuncMap {
 		"localTime": localTime,
 		// avatarStyle 根据字符串哈希生成头像背景/前景色。
 		"avatarStyle": avatarStyle,
+		// urlPath 转义文件夹名用于 URL 路径（自定义文件夹可能含中文/空格）。
+		"urlPath": url.PathEscape,
+		// folderLabel 返回文件夹的界面显示名（系统文件夹中文名，自定义原名）。
+		"folderLabel": func(name string) string {
+			switch name {
+			case "INBOX":
+				return "收件箱"
+			case "Sent":
+				return "已发送"
+			case "Drafts":
+				return "草稿箱"
+			case "Trash":
+				return "已删除"
+			default:
+				return name
+			}
+		},
 	}
 }
 
@@ -294,7 +312,7 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 // registerRoutes sets up all HTTP routes with their handlers and middleware.
 func (ws *WebServer) registerRoutes() {
 	authHandler := handlers.NewAuthHandler(ws.stores, ws.authCfg, ws.banCfg)
-	mailHandler := handlers.NewMailHandler(ws.stores, ws.storage, ws.outbound, ws.pusher)
+	mailHandler := handlers.NewMailHandler(ws.stores, ws.storage, ws.outbound, imap_server.NewMailboxService(ws.stores), ws.pusher)
 	adminHandler := handlers.NewAdminHandler(ws.stores, ws.storage, filepath.Join(ws.storageCfg.BaseDir, "tls", "domains"), ws.caddyDataDir, ws.outbound, ws.cfg.ProtocolLogKeepDays, ws.hub)
 
 	// Apply BanMiddleware globally before public routes
@@ -318,20 +336,27 @@ func (ws *WebServer) registerRoutes() {
 			c.Redirect(302, "/inbox")
 		})
 
-		// Mail routes
-		auth.GET("/inbox", mailHandler.Inbox)
-		auth.GET("/inbox/:id", mailHandler.View)
+		// Mail routes：通用文件夹页（文件夹目录与 IMAP LIST 同源）
+		auth.GET("/folder/:name", mailHandler.Folder)
+		auth.GET("/folder/:name/:id", mailHandler.View)
+		auth.POST("/folder/:name/empty", mailHandler.EmptyFolder)
 		auth.GET("/compose", mailHandler.Compose)
 		auth.POST("/compose", mailHandler.DoSend)
-		auth.GET("/drafts", mailHandler.Drafts)
-		auth.GET("/drafts/:id", mailHandler.View)
-		auth.GET("/sent", mailHandler.Sent)
-		auth.GET("/sent/:id", mailHandler.View)
 		auth.GET("/settings", mailHandler.Settings)
 		auth.POST("/settings", mailHandler.UpdateSettings)
 		auth.POST("/mail/delete/:id", mailHandler.Delete)
+		auth.POST("/mail/restore/:id", mailHandler.Restore)
+		auth.POST("/mail/purge/:id", mailHandler.Purge)
 		auth.POST("/mail/read/:id", mailHandler.MarkRead)
 		auth.GET("/attachment/:id", mailHandler.DownloadAttachment)
+
+		// 旧路径兼容重定向（登录跳转、书签、外部链接仍指向 /inbox 等）
+		auth.GET("/inbox", func(c *gin.Context) { c.Redirect(http.StatusFound, "/folder/INBOX") })
+		auth.GET("/inbox/:id", func(c *gin.Context) { c.Redirect(http.StatusFound, "/folder/INBOX/"+c.Param("id")) })
+		auth.GET("/sent", func(c *gin.Context) { c.Redirect(http.StatusFound, "/folder/Sent") })
+		auth.GET("/sent/:id", func(c *gin.Context) { c.Redirect(http.StatusFound, "/folder/Sent/"+c.Param("id")) })
+		auth.GET("/drafts", func(c *gin.Context) { c.Redirect(http.StatusFound, "/folder/Drafts") })
+		auth.GET("/drafts/:id", func(c *gin.Context) { c.Redirect(http.StatusFound, "/folder/Drafts/"+c.Param("id")) })
 	}
 
 	// Admin routes (auth + admin required)

@@ -37,6 +37,9 @@ type IMAPServer struct {
 	tlsLoader *tlsutil.Loader
 	hub       *connhub.Hub
 
+	// svc 邮箱服务层（文件夹目录/消息操作），IMAP 会话与 Web 共用。
+	svc *MailboxService
+
 	// hubs 按「用户邮箱 + 文件夹」索引的推送中心，会话 SELECT 时加入。
 	mu   sync.Mutex
 	hubs map[string]*mailboxHub
@@ -53,9 +56,15 @@ func NewIMAPServer(cfg config.IMAPConfig, stores *store.Stores, tlsLoader *tlsut
 		banCfg:    banCfg,
 		tlsLoader: tlsLoader,
 		hub:       hub,
+		svc:       NewMailboxService(stores),
 		hubs:      make(map[string]*mailboxHub),
 		sessions:  make(map[*imapSession]struct{}),
 	}
+}
+
+// MailboxService 返回邮箱服务层（Web handler 共用）。
+func (s *IMAPServer) MailboxService() *MailboxService {
+	return s.svc
 }
 
 // hubKey 生成推送中心索引键。
@@ -91,15 +100,17 @@ func (s *IMAPServer) unregisterSession(sess *imapSession) {
 
 // NotifyNewMessage 推送新邮件到达通知：EXISTS 计数 + 标记更新。
 // 由 SMTP/Web 本地投递成功时调用；无会话选中该邮箱时为 no-op。
+// 推送目标邮箱取 msg.Folder（本地投递为 INBOX；Web 移动/恢复时
+// 用于通知目标文件夹，如 Trash）。
 func (s *IMAPServer) PushNewMessage(userEmail string, msg *db.Message) {
-	if s == nil || userEmail == "" || msg == nil {
+	if s == nil || userEmail == "" || msg == nil || msg.Folder == "" {
 		return
 	}
-	hub := s.hubFor(userEmail, "INBOX")
+	hub := s.hubFor(userEmail, msg.Folder)
 	if hub == nil {
 		return
 	}
-	if count, err := s.stores.Mails.CountByUserAndFolder(msg.UserID, "INBOX"); err == nil {
+	if count, err := s.stores.Mails.CountByUserAndFolder(msg.UserID, msg.Folder); err == nil {
 		hub.enqueue(sessionUpdate{exists: ptrU32(uint32(count))}, nil)
 	}
 }

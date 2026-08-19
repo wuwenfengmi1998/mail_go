@@ -41,7 +41,7 @@ func newTestStores(t *testing.T) *store.Stores {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := gdb.AutoMigrate(&db.User{}, &db.Domain{}, &db.Message{}, &db.Attachment{}, &db.BanEntry{}, &db.OutboundMessage{}); err != nil {
+	if err := gdb.AutoMigrate(&db.User{}, &db.Domain{}, &db.Message{}, &db.Attachment{}, &db.BanEntry{}, &db.OutboundMessage{}, &db.Mailbox{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	return store.NewStores(gdb)
@@ -122,7 +122,7 @@ func TestSessionSignedWithConfiguredSecretKey(t *testing.T) {
 	}
 
 	// 合法会话可以访问收件箱
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/inbox", nil)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL + "/folder/INBOX", nil)
 	req.AddCookie(&http.Cookie{Name: "mail_go_session", Value: sessionCookie})
 	resp2, err := client.Do(req)
 	if err != nil {
@@ -151,7 +151,7 @@ func TestLegacyHardcodedKeyCannotForgeSession(t *testing.T) {
 		t.Fatalf("forge cookie: %v", err)
 	}
 
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/inbox", nil)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL + "/folder/INBOX", nil)
 	req.AddCookie(&http.Cookie{Name: "mail_go_session", Value: forged})
 	client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse
@@ -229,7 +229,7 @@ func TestSessionAbsoluteExpiryForcesRelogin(t *testing.T) {
 	expired := time.Now().Add(-8 * 24 * time.Hour).Unix()
 	cookie := encodeSessionCookie(t, key, authCookieValues(1, expired))
 
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/inbox", nil)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL + "/folder/INBOX", nil)
 	req.AddCookie(&http.Cookie{Name: "mail_go_session", Value: cookie})
 	client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse
@@ -254,7 +254,7 @@ func TestSessionWithinExpiryWorks(t *testing.T) {
 
 	cookie := encodeSessionCookie(t, key, authCookieValues(1, time.Now().Add(-time.Hour).Unix()))
 
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/inbox", nil)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL + "/folder/INBOX", nil)
 	req.AddCookie(&http.Cookie{Name: "mail_go_session", Value: cookie})
 	client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse

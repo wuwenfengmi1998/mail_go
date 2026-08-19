@@ -51,38 +51,88 @@ type MailHandler struct {
 	stores   *store.Stores
 	storage  *storage.AttachmentStorage
 	outbound *outbound.Manager
+	// svc 邮箱服务层（IMAP 层共用）：文件夹目录与消息操作同源。
+	svc *imap_server.MailboxService
 	// pusher 邮件状态变化推送（IMAP 客户端实时同步），可空
 	pusher imap_server.Pusher
 }
 
 // NewMailHandler creates a new MailHandler with the given stores, attachment
-// storage and outbound delivery manager.
-func NewMailHandler(stores *store.Stores, attStorage *storage.AttachmentStorage, ob *outbound.Manager, pusher imap_server.Pusher) *MailHandler {
-	return &MailHandler{stores: stores, storage: attStorage, outbound: ob, pusher: pusher}
+// storage, mailbox service and outbound delivery manager.
+func NewMailHandler(stores *store.Stores, attStorage *storage.AttachmentStorage, ob *outbound.Manager, svc *imap_server.MailboxService, pusher imap_server.Pusher) *MailHandler {
+	return &MailHandler{stores: stores, storage: attStorage, outbound: ob, svc: svc, pusher: pusher}
 }
 
-// folderCounts returns sidebar badge counts for the current user.
-func (h *MailHandler) folderCounts(userID uint) (inboxUnread, draftsTotal, sentTotal int64) {
-	inboxUnread, _ = h.stores.Mails.CountUnread(userID, "INBOX")
-	draftsTotal, _ = h.stores.Mails.CountByUserAndFolder(userID, "Drafts")
-	sentTotal, _ = h.stores.Mails.CountByUserAndFolder(userID, "Sent")
-	return
-}
-
-// Inbox renders the inbox page showing all messages in the user's INBOX folder.
-func (h *MailHandler) Inbox(c *gin.Context) {
-	userID := c.GetUint("userID")
-	page := getPageParam(c, "page", 1)
-
-	messages, total, err := h.stores.Mails.ListByUserAndFolder(userID, "INBOX", page, 20)
+// foldersFor 返回当前用户的侧边栏文件夹列表（与 IMAP LIST 同源：
+// IMAP 返回什么文件夹，Web 就显示什么）。
+func (h *MailHandler) foldersFor(userID uint) []imap_server.FolderInfo {
+	infos, err := h.svc.List(userID)
 	if err != nil {
-		c.String(http.StatusInternalServerError, "加载收件箱失败: %v", err)
+		log.Printf("web: 加载文件夹列表失败 user=%d: %v", userID, err)
+		return nil
+	}
+	return infos
+}
+
+// userEmailOf 从 context 取当前用户完整邮箱（推送用），失败返回空串。
+func userEmailOf(c *gin.Context) string {
+	if cu, ok := c.Get("currentUser"); ok {
+		if u, ok := cu.(*db.User); ok {
+			return u.Username + "@" + u.Domain.Name
+		}
+	}
+	return ""
+}
+
+// seqOfFolder 返回消息在文件夹中的序号（1 基，与 IMAP 序号排序一致）。
+func (h *MailHandler) seqOfFolder(userID uint, folder string, msgID uint) uint32 {
+	msgs, err := h.stores.Mails.ListAllByUserAndFolder(userID, folder)
+	if err != nil {
+		return 0
+	}
+	for i := range msgs {
+		if msgs[i].ID == msgID {
+			return uint32(i + 1)
+		}
+	}
+	return 0
+}
+
+// purgeMessages 永久删除邮件（含附件文件与配额回退）。
+func (h *MailHandler) purgeMessages(userID uint, msgs []db.Message) {
+	ids := make([]uint, 0, len(msgs))
+	for i := range msgs {
+		attachments, _ := h.stores.Attachments.ListByMessage(msgs[i].ID)
+		for _, att := range attachments {
+			_ = h.storage.Delete(att.FilePath)
+			_ = h.stores.Users.UpdateUsedBytes(userID, -att.FileSize)
+		}
+		if err := h.stores.Attachments.DeleteByMessage(msgs[i].ID); err != nil {
+			log.Printf("web: 删除附件记录失败 msg=%d: %v", msgs[i].ID, err)
+		}
+		ids = append(ids, msgs[i].ID)
+	}
+	if err := h.stores.Mails.DeleteMany(ids); err != nil {
+		log.Printf("web: 删除邮件失败: %v", err)
+	}
+}
+
+// Folder renders the generic mailbox page for any folder the IMAP layer
+// exposes (INBOX / Sent / Drafts / Trash / custom mailboxes).
+func (h *MailHandler) Folder(c *gin.Context) {
+	userID := c.GetUint("userID")
+	name, ok := h.svc.Canonical(userID, c.Param("name"))
+	if !ok {
+		c.String(http.StatusNotFound, "邮箱不存在")
 		return
 	}
+	page := getPageParam(c, "page", 1)
 
-	inboxUnread, draftsTotal, sentTotal := h.folderCounts(userID)
-
-	currentUser, _ := c.Get("currentUser")
+	messages, total, err := h.svc.Messages(userID, name, page, 20)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "加载邮件列表失败: %v", err)
+		return
+	}
 
 	totalPages := int(total) / 20
 	if int(total)%20 > 0 {
@@ -92,18 +142,18 @@ func (h *MailHandler) Inbox(c *gin.Context) {
 		totalPages = 0
 	}
 
-	c.HTML(200, "inbox", gin.H{
+	currentUser, _ := c.Get("currentUser")
+	c.HTML(200, "folder", gin.H{
 		"currentUser":  currentUser,
 		"messages":     messages,
 		"total":        total,
 		"page":         page,
 		"pageSize":     20,
 		"totalPages":   totalPages,
-		"folder":       "INBOX",
-		"activeFolder": "inbox",
-		"inboxUnread":  inboxUnread,
-		"draftsTotal":  draftsTotal,
-		"sentTotal":    sentTotal,
+		"folder":       name,
+		"activeFolder": name,
+		"isTrash":      name == "Trash",
+		"folders":      h.foldersFor(userID),
 	})
 }
 
@@ -140,16 +190,14 @@ func (h *MailHandler) View(c *gin.Context) {
 	}
 
 	currentUser, _ := c.Get("currentUser")
-	inboxUnread, draftsTotal, sentTotal := h.folderCounts(userID)
 
 	c.HTML(200, "view", gin.H{
 		"currentUser":  currentUser,
 		"message":      msg,
 		"attachments":  attachments,
-		"activeFolder": resolveActiveFolder(msg.Folder),
-		"inboxUnread":  inboxUnread,
-		"draftsTotal":  draftsTotal,
-		"sentTotal":    sentTotal,
+		"activeFolder": msg.Folder,
+		"inTrash":      msg.Folder == "Trash",
+		"folders":      h.foldersFor(userID),
 	})
 }
 
@@ -167,8 +215,6 @@ func (h *MailHandler) Compose(c *gin.Context) {
 		quotaBytes = user.QuotaBytes
 	}
 
-	inboxUnread, draftsTotal, sentTotal := h.folderCounts(userID)
-
 	c.HTML(200, "compose", gin.H{
 		"currentUser":  currentUser,
 		"activeFolder": "compose",
@@ -178,10 +224,24 @@ func (h *MailHandler) Compose(c *gin.Context) {
 		"bodyContent":  "",
 		"usedBytes":    usedBytes,
 		"quotaBytes":   quotaBytes,
-		"inboxUnread":  inboxUnread,
-		"draftsTotal":  draftsTotal,
-		"sentTotal":    sentTotal,
+		"folders":      h.foldersFor(userID),
 	})
+}
+
+// composeData builds the shared template context for the compose page.
+func (h *MailHandler) composeData(userID uint, user *db.User, errMsg, to, subject, cc, body string) gin.H {
+	return gin.H{
+		"currentUser":  user,
+		"activeFolder": "compose",
+		"error":        errMsg,
+		"to":           to,
+		"subject":      subject,
+		"cc":           cc,
+		"bodyContent":  body,
+		"usedBytes":    user.UsedBytes,
+		"quotaBytes":   user.QuotaBytes,
+		"folders":      h.foldersFor(userID),
+	}
 }
 
 // DoSend processes the email composition form, sends the email via SMTP,
@@ -198,17 +258,7 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 	cc := c.PostForm("cc")
 
 	if to == "" {
-		c.HTML(http.StatusBadRequest, "compose", gin.H{
-			"currentUser":  currentUser,
-			"activeFolder": "compose",
-			"error":        "请输入收件人",
-			"to":           to,
-			"subject":      subject,
-			"cc":           cc,
-			"bodyContent":  htmlBody,
-			"usedBytes":    currentUser.UsedBytes,
-			"quotaBytes":   currentUser.QuotaBytes,
-		})
+		c.HTML(http.StatusBadRequest, "compose", h.composeData(userID, currentUser, "请输入收件人", to, subject, cc, htmlBody))
 		return
 	}
 
@@ -226,17 +276,7 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 			}
 			reserved, err := h.stores.Users.TryReserveQuota(userID, totalNewSize)
 			if err != nil {
-				c.HTML(http.StatusInternalServerError, "compose", gin.H{
-					"currentUser":  currentUser,
-					"activeFolder": "compose",
-					"error":        "配额检查失败，请稍后重试",
-					"to":           to,
-					"subject":      subject,
-					"cc":           cc,
-					"bodyContent":  htmlBody,
-					"usedBytes":    currentUser.UsedBytes,
-					"quotaBytes":   currentUser.QuotaBytes,
-				})
+				c.HTML(http.StatusInternalServerError, "compose", h.composeData(userID, currentUser, "配额检查失败，请稍后重试", to, subject, cc, htmlBody))
 				return
 			}
 			if !reserved {
@@ -255,6 +295,7 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 					"bodyContent":  htmlBody,
 					"usedBytes":    usedBytes,
 					"quotaBytes":   quotaBytes,
+					"folders":      h.foldersFor(userID),
 				})
 				return
 			}
@@ -314,46 +355,16 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 	if len(externalRecipients) > 0 {
 		ob := h.outbound
 		if ob == nil || !ob.Enabled() {
-			c.HTML(http.StatusBadRequest, "compose", gin.H{
-				"currentUser":  currentUser,
-				"activeFolder": "compose",
-				"error":        "外部投递未启用",
-				"to":           to,
-				"subject":      subject,
-				"cc":           cc,
-				"bodyContent":  htmlBody,
-				"usedBytes":    currentUser.UsedBytes,
-				"quotaBytes":   currentUser.QuotaBytes,
-			})
+			c.HTML(http.StatusBadRequest, "compose", h.composeData(userID, currentUser, "外部投递未启用", to, subject, cc, htmlBody))
 			return
 		}
 		if maxRcpt := ob.MaxRecipients(); maxRcpt > 0 && len(externalRecipients) > maxRcpt {
-			c.HTML(http.StatusBadRequest, "compose", gin.H{
-				"currentUser":  currentUser,
-				"activeFolder": "compose",
-				"error":        fmt.Sprintf("外部收件人过多：最多 %d 个", maxRcpt),
-				"to":           to,
-				"subject":      subject,
-				"cc":           cc,
-				"bodyContent":  htmlBody,
-				"usedBytes":    currentUser.UsedBytes,
-				"quotaBytes":   currentUser.QuotaBytes,
-			})
+			c.HTML(http.StatusBadRequest, "compose", h.composeData(userID, currentUser, fmt.Sprintf("外部收件人过多：最多 %d 个", maxRcpt), to, subject, cc, htmlBody))
 			return
 		}
 		for _, rcpt := range externalRecipients {
 			if _, err := ob.Enqueue(currentUser, fromAddr, rcpt, []byte(rawMessage)); err != nil {
-				c.HTML(http.StatusBadRequest, "compose", gin.H{
-					"currentUser":  currentUser,
-					"activeFolder": "compose",
-					"error":        fmt.Sprintf("外发邮件入队失败 (%s): %v", rcpt, err),
-					"to":           to,
-					"subject":      subject,
-					"cc":           cc,
-					"bodyContent":  htmlBody,
-					"usedBytes":    currentUser.UsedBytes,
-					"quotaBytes":   currentUser.QuotaBytes,
-				})
+				c.HTML(http.StatusBadRequest, "compose", h.composeData(userID, currentUser, fmt.Sprintf("外发邮件入队失败 (%s): %v", rcpt, err), to, subject, cc, htmlBody))
 				return
 			}
 		}
@@ -375,17 +386,7 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 			IsRead:    false,
 		}
 		if createErr := h.stores.Mails.Create(inboxMsg); createErr != nil {
-			c.HTML(http.StatusInternalServerError, "compose", gin.H{
-				"currentUser":  currentUser,
-				"activeFolder": "compose",
-				"error":        fmt.Sprintf("投递邮件失败: %v", createErr),
-				"to":           to,
-				"subject":      subject,
-				"cc":           cc,
-				"bodyContent":  htmlBody,
-				"usedBytes":    currentUser.UsedBytes,
-				"quotaBytes":   currentUser.QuotaBytes,
-			})
+			c.HTML(http.StatusInternalServerError, "compose", h.composeData(userID, currentUser, fmt.Sprintf("投递邮件失败: %v", createErr), to, subject, cc, htmlBody))
 			return
 		}
 		// 本地投递成功 → IMAP 新邮件推送（IDLE 客户端实时收到通知）
@@ -411,17 +412,7 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 	}
 
 	if createErr := h.stores.Mails.Create(msg); createErr != nil {
-		c.HTML(http.StatusInternalServerError, "compose", gin.H{
-			"currentUser":  currentUser,
-			"activeFolder": "compose",
-			"error":        fmt.Sprintf("保存邮件失败: %v", createErr),
-			"to":           to,
-			"subject":      subject,
-			"cc":           cc,
-			"bodyContent":  htmlBody,
-			"usedBytes":    currentUser.UsedBytes,
-			"quotaBytes":   currentUser.QuotaBytes,
-		})
+		c.HTML(http.StatusInternalServerError, "compose", h.composeData(userID, currentUser, fmt.Sprintf("保存邮件失败: %v", createErr), to, subject, cc, htmlBody))
 		return
 	}
 
@@ -572,43 +563,6 @@ var mimeTypes = map[string]string{
 	".csv":  "text/csv",
 }
 
-// Sent renders the sent mail folder page.
-func (h *MailHandler) Sent(c *gin.Context) {
-	userID := c.GetUint("userID")
-	page := getPageParam(c, "page", 1)
-
-	messages, total, err := h.stores.Mails.ListByUserAndFolder(userID, "Sent", page, 20)
-	if err != nil {
-		c.String(http.StatusInternalServerError, "加载发件箱失败: %v", err)
-		return
-	}
-
-	currentUser, _ := c.Get("currentUser")
-	inboxUnread, draftsTotal, sentTotal := h.folderCounts(userID)
-
-	totalPages := int(total) / 20
-	if int(total)%20 > 0 {
-		totalPages++
-	}
-	if totalPages < 1 {
-		totalPages = 0
-	}
-
-	c.HTML(200, "sent", gin.H{
-		"currentUser":  currentUser,
-		"messages":     messages,
-		"total":        total,
-		"page":         page,
-		"pageSize":     20,
-		"totalPages":   totalPages,
-		"folder":       "Sent",
-		"activeFolder": "sent",
-		"inboxUnread":  inboxUnread,
-		"draftsTotal":  draftsTotal,
-		"sentTotal":    sentTotal,
-	})
-}
-
 // safeRedirectPath 仅接受同站相对路径（以 / 开头且非 //），
 // 防止把用户重定向到外部站点（开放重定向）。非法值返回空串，
 // 调用方应回退到默认路径。
@@ -619,7 +573,8 @@ func safeRedirectPath(referer string) string {
 	return referer
 }
 
-// Delete removes a message by ID after verifying ownership.
+// Delete 删除邮件（IMAP 语义）：非 Trash 文件夹 → 移入 Trash；
+// 已在 Trash → 彻底删除。
 func (h *MailHandler) Delete(c *gin.Context) {
 	userID := c.GetUint("userID")
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
@@ -633,48 +588,126 @@ func (h *MailHandler) Delete(c *gin.Context) {
 		c.String(http.StatusForbidden, "禁止访问")
 		return
 	}
+	userEmail := userEmailOf(c)
 
-	// Delete attachments on disk and in DB, and decrease UsedBytes
-	attachments, _ := h.stores.Attachments.ListByMessage(uint(id))
-	for _, att := range attachments {
-		_ = h.storage.Delete(att.FilePath)
-		_ = h.stores.Users.UpdateUsedBytes(userID, -att.FileSize)
-	}
-	if err := h.stores.Attachments.DeleteByMessage(uint(id)); err != nil {
-		log.Printf("web: 删除附件记录失败 msg=%d: %v", id, err)
-	}
-
-	// 删除前计算消息在所属文件夹中的序号（用于 Expunge 推送）
-	var seq uint32
-	if msgs, err := h.stores.Mails.ListAllByUserAndFolder(userID, msg.Folder); err == nil {
-		for i := range msgs {
-			if msgs[i].ID == uint(id) {
-				seq = uint32(i + 1)
-				break
-			}
+	if msg.Folder == "Trash" {
+		// 垃圾箱中删除 = 彻底删除
+		seq := h.seqOfFolder(userID, msg.Folder, msg.ID)
+		h.purgeMessages(userID, []db.Message{*msg})
+		if h.pusher != nil && userEmail != "" {
+			h.pusher.PushExpunged(userEmail, msg.Folder, []uint32{seq})
 		}
-	}
-	if err := h.stores.Mails.Delete(uint(id)); err != nil {
-		log.Printf("web: 删除邮件失败 msg=%d: %v", id, err)
-	}
-
-	// 删除 → 推送给该用户的其他 IMAP 客户端
-	if h.pusher != nil && seq > 0 {
-		userEmail := ""
-		if cu, ok := c.Get("currentUser"); ok {
-			if u, ok := cu.(*db.User); ok {
-				userEmail = u.Username + "@" + u.Domain.Name
-			}
+	} else {
+		// 其余文件夹删除 = 移入垃圾箱（与 IMAP MOVE 同源语义）
+		seq := h.seqOfFolder(userID, msg.Folder, msg.ID)
+		if err := h.svc.Move(userID, []uint{msg.ID}, "Trash"); err != nil {
+			log.Printf("web: 移入垃圾箱失败 msg=%d: %v", id, err)
+			c.String(http.StatusInternalServerError, "删除失败")
+			return
 		}
-		h.pusher.PushExpunged(userEmail, msg.Folder, []uint32{seq})
+		if h.pusher != nil && userEmail != "" {
+			h.pusher.PushExpunged(userEmail, msg.Folder, []uint32{seq})
+			h.pusher.PushNewMessage(userEmail, &db.Message{UserID: userID, Folder: "Trash"})
+		}
 	}
 
 	// Redirect back based on the folder（仅同站相对路径，防开放重定向）
 	referer := safeRedirectPath(c.GetHeader("Referer"))
 	if referer == "" {
-		referer = "/inbox"
+		referer = "/folder/" + msg.Folder
 	}
 	c.Redirect(http.StatusFound, referer)
+}
+
+// Restore 把垃圾箱中的邮件恢复到收件箱。
+func (h *MailHandler) Restore(c *gin.Context) {
+	userID := c.GetUint("userID")
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.String(http.StatusBadRequest, "无效的邮件ID")
+		return
+	}
+
+	msg, err := h.stores.Mails.GetByID(uint(id))
+	if err != nil || msg.UserID != userID {
+		c.String(http.StatusForbidden, "禁止访问")
+		return
+	}
+	if msg.Folder != "Trash" {
+		c.Redirect(http.StatusFound, "/folder/"+msg.Folder)
+		return
+	}
+
+	seq := h.seqOfFolder(userID, "Trash", msg.ID)
+	if err := h.svc.Move(userID, []uint{msg.ID}, "INBOX"); err != nil {
+		log.Printf("web: 恢复邮件失败 msg=%d: %v", id, err)
+		c.String(http.StatusInternalServerError, "恢复失败")
+		return
+	}
+	if h.pusher != nil {
+		if email := userEmailOf(c); email != "" {
+			h.pusher.PushExpunged(email, "Trash", []uint32{seq})
+			h.pusher.PushNewMessage(email, &db.Message{UserID: userID, Folder: "INBOX"})
+		}
+	}
+	c.Redirect(http.StatusFound, "/folder/Trash")
+}
+
+// Purge 彻底删除一封邮件（任意文件夹）。
+func (h *MailHandler) Purge(c *gin.Context) {
+	userID := c.GetUint("userID")
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.String(http.StatusBadRequest, "无效的邮件ID")
+		return
+	}
+
+	msg, err := h.stores.Mails.GetByID(uint(id))
+	if err != nil || msg.UserID != userID {
+		c.String(http.StatusForbidden, "禁止访问")
+		return
+	}
+
+	seq := h.seqOfFolder(userID, msg.Folder, msg.ID)
+	h.purgeMessages(userID, []db.Message{*msg})
+	if h.pusher != nil {
+		if email := userEmailOf(c); email != "" {
+			h.pusher.PushExpunged(email, msg.Folder, []uint32{seq})
+		}
+	}
+
+	referer := safeRedirectPath(c.GetHeader("Referer"))
+	if referer == "" {
+		referer = "/folder/" + msg.Folder
+	}
+	c.Redirect(http.StatusFound, referer)
+}
+
+// EmptyFolder 清空文件夹（永久删除其中全部邮件）。
+func (h *MailHandler) EmptyFolder(c *gin.Context) {
+	userID := c.GetUint("userID")
+	name, ok := h.svc.Canonical(userID, c.Param("name"))
+	if !ok {
+		c.String(http.StatusNotFound, "邮箱不存在")
+		return
+	}
+
+	msgs, err := h.stores.Mails.ListAllByUserAndFolder(userID, name)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "清空文件夹失败: %v", err)
+		return
+	}
+	seqs := make([]uint32, 0, len(msgs))
+	for i := range msgs {
+		seqs = append(seqs, uint32(i+1))
+	}
+	h.purgeMessages(userID, msgs)
+	if h.pusher != nil {
+		if email := userEmailOf(c); email != "" {
+			h.pusher.PushExpunged(email, name, seqs)
+		}
+	}
+	c.Redirect(http.StatusFound, "/folder/"+name)
 }
 
 // MarkRead marks a message as read.
@@ -709,7 +742,7 @@ func (h *MailHandler) MarkRead(c *gin.Context) {
 	// Redirect back based on the folder（仅同站相对路径，防开放重定向）
 	referer := safeRedirectPath(c.GetHeader("Referer"))
 	if referer == "" {
-		referer = "/inbox"
+		referer = "/folder/INBOX"
 	}
 	c.Redirect(http.StatusFound, referer)
 }
@@ -760,58 +793,29 @@ func getPageParam(c *gin.Context, key string, defaultVal int) int {
 	return page
 }
 
-// Drafts renders the drafts folder page.
-func (h *MailHandler) Drafts(c *gin.Context) {
-	userID := c.GetUint("userID")
-	page := getPageParam(c, "page", 1)
-
-	messages, total, err := h.stores.Mails.ListByUserAndFolder(userID, "Drafts", page, 20)
-	if err != nil {
-		c.String(http.StatusInternalServerError, "加载草稿箱失败: %v", err)
-		return
-	}
-
-	currentUser, _ := c.Get("currentUser")
-	inboxUnread, draftsTotal, sentTotal := h.folderCounts(userID)
-
-	totalPages := int(total) / 20
-	if int(total)%20 > 0 {
-		totalPages++
-	}
-	if totalPages < 1 {
-		totalPages = 0
-	}
-
-	c.HTML(200, "drafts", gin.H{
-		"currentUser":  currentUser,
-		"messages":     messages,
-		"total":        total,
-		"page":         page,
-		"pageSize":     20,
-		"totalPages":   totalPages,
-		"folder":       "Drafts",
-		"activeFolder": "drafts",
-		"inboxUnread":  inboxUnread,
-		"draftsTotal":  draftsTotal,
-		"sentTotal":    sentTotal,
-	})
-}
-
 // Settings renders the user settings page.
 func (h *MailHandler) Settings(c *gin.Context) {
 	currentUser, _ := c.Get("currentUser")
 	userID := c.GetUint("userID")
-	inboxUnread, draftsTotal, sentTotal := h.folderCounts(userID)
 	c.HTML(200, "settings", gin.H{
 		"currentUser":  currentUser,
 		"activeFolder": "settings",
 		"error":        "",
 		"success":      "",
 		"mustChange":   c.Query("force") == "1",
-		"inboxUnread":  inboxUnread,
-		"draftsTotal":  draftsTotal,
-		"sentTotal":    sentTotal,
+		"folders":      h.foldersFor(userID),
 	})
+}
+
+// settingsData builds the shared template context for the settings page.
+func (h *MailHandler) settingsData(userID uint, user *db.User, errMsg, success string) gin.H {
+	return gin.H{
+		"currentUser":  user,
+		"activeFolder": "settings",
+		"error":        errMsg,
+		"success":      success,
+		"folders":      h.foldersFor(userID),
+	}
 }
 
 // UpdateSettings handles the password change form.
@@ -826,76 +830,32 @@ func (h *MailHandler) UpdateSettings(c *gin.Context) {
 
 	// Verify old password
 	if err := bcrypt.CompareHashAndPassword([]byte(currentUser.PasswordHash), []byte(oldPassword)); err != nil {
-		c.HTML(http.StatusBadRequest, "settings", gin.H{
-			"currentUser":  currentUser,
-			"activeFolder": "settings",
-			"error":        "当前密码不正确",
-			"success":      "",
-		})
+		c.HTML(http.StatusBadRequest, "settings", h.settingsData(userID, currentUser, "当前密码不正确", ""))
 		return
 	}
 
 	if newPassword == "" {
-		c.HTML(http.StatusBadRequest, "settings", gin.H{
-			"currentUser":  currentUser,
-			"activeFolder": "settings",
-			"error":        "新密码不能为空",
-			"success":      "",
-		})
+		c.HTML(http.StatusBadRequest, "settings", h.settingsData(userID, currentUser, "新密码不能为空", ""))
 		return
 	}
 
 	if newPassword != confirmPassword {
-		c.HTML(http.StatusBadRequest, "settings", gin.H{
-			"currentUser":  currentUser,
-			"activeFolder": "settings",
-			"error":        "两次输入的密码不一致",
-			"success":      "",
-		})
+		c.HTML(http.StatusBadRequest, "settings", h.settingsData(userID, currentUser, "两次输入的密码不一致", ""))
 		return
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
-		c.HTML(http.StatusInternalServerError, "settings", gin.H{
-			"currentUser":  currentUser,
-			"activeFolder": "settings",
-			"error":        "密码加密失败",
-			"success":      "",
-		})
+		c.HTML(http.StatusInternalServerError, "settings", h.settingsData(userID, currentUser, "密码加密失败", ""))
 		return
 	}
 
 	if err := h.stores.Users.UpdatePassword(userID, string(hashedPassword)); err != nil {
-		c.HTML(http.StatusInternalServerError, "settings", gin.H{
-			"currentUser":  currentUser,
-			"activeFolder": "settings",
-			"error":        "密码更新失败",
-			"success":      "",
-		})
+		c.HTML(http.StatusInternalServerError, "settings", h.settingsData(userID, currentUser, "密码更新失败", ""))
 		return
 	}
 
-	c.HTML(http.StatusOK, "settings", gin.H{
-		"currentUser":  currentUser,
-		"activeFolder": "settings",
-		"error":        "",
-		"success":      "密码修改成功",
-	})
-}
-
-// resolveActiveFolder maps a folder name to a sidebar active state key.
-func resolveActiveFolder(folder string) string {
-	switch folder {
-	case "INBOX":
-		return "inbox"
-	case "Sent":
-		return "sent"
-	case "Drafts":
-		return "drafts"
-	default:
-		return folder
-	}
+	c.HTML(http.StatusOK, "settings", h.settingsData(userID, currentUser, "", "密码修改成功"))
 }
 
 // formatBytes converts a file size in bytes to a human-readable string.

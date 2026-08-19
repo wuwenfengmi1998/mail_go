@@ -1,10 +1,10 @@
-{{define "sent"}}
+{{define "folder"}}
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>已发送 - MailGo</title>
+    <title>{{folderLabel .folder}} - MailGo</title>
     {{template "styles" .}}
 </head>
 <body class="page-list">
@@ -23,29 +23,46 @@
                 </button>
                 <button type="button" class="tb-btn danger" id="btn-delete" disabled>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                    删除
+                    {{if .isTrash}}彻底删除{{else}}删除{{end}}
                 </button>
+                {{if .isTrash}}
+                <form method="POST" action="/folder/Trash/empty" style="display:inline;"
+                      onsubmit="return confirm('确定要清空「已删除」文件夹吗？此操作不可恢复。');">
+                    <button type="submit" class="tb-btn danger">清空文件夹</button>
+                </form>
+                {{end}}
                 <div class="toolbar-spacer"></div>
                 <span class="page-info">共 {{.total}} 封</span>
             </div>
 
             {{if not .messages}}
             <div class="mail-list">
-                <div class="empty-tip"><span class="empty-icon">📤</span>已发送暂无邮件</div>
+                <div class="empty-tip"><span class="empty-icon">{{if .isTrash}}🗑{{else}}📭{{end}}</span>{{folderLabel .folder}}暂无邮件</div>
             </div>
             {{else}}
             <ul class="mail-list">
                 {{range .messages}}
-                <li class="mail-row" data-id="{{.ID}}">
+                <li class="mail-row {{if not .IsRead}}unread{{end}}" data-id="{{.ID}}">
                     <label class="cell-check" onclick="event.stopPropagation()">
                         <input type="checkbox" class="row-check" data-id="{{.ID}}">
                     </label>
                     <span class="cell-avatar">
+                        {{if or (eq $.folder "Sent") (eq $.folder "Drafts")}}
                         <span class="avatar" style="{{avatarStyle .ToAddr}}">{{initial (mailName .ToAddr)}}</span>
+                        {{else}}
+                        <span class="avatar" style="{{avatarStyle .FromAddr}}">{{initial (mailName (decodeHeader .FromAddr))}}</span>
+                        {{end}}
                     </span>
-                    <span class="cell-from" title="收件人：{{.ToAddr}}">{{mailName .ToAddr}}</span>
+                    <span class="cell-from" {{if or (eq $.folder "Sent") (eq $.folder "Drafts")}}title="收件人：{{.ToAddr}}"{{else}}title="{{decodeHeader .FromAddr}}"{{end}}>
+                        {{if or (eq $.folder "Sent") (eq $.folder "Drafts")}}
+                        {{if eq $.folder "Drafts"}}致：{{end}}{{mailName .ToAddr}}
+                        {{else}}
+                        {{mailName (decodeHeader .FromAddr)}}
+                        {{end}}
+                    </span>
                     <span class="cell-subject-wrap">
-                        <a class="cell-subject" href="/sent/{{.ID}}">
+                        {{if not .IsRead}}<span class="unread-dot"></span>{{end}}
+                        <a class="cell-subject" href="/folder/{{urlPath $.folder}}/{{.ID}}">
                             {{if .Subject}}{{.Subject}}{{else}}(无主题){{end}}
                         </a>
                     </span>
@@ -53,12 +70,21 @@
                         {{if .TextBody}}{{truncate .TextBody 80}}{{else if .HtmlBody}}[HTML 邮件]{{end}}
                     </span>
                     <span class="cell-date">{{shortDate .Date}}</span>
+                    {{if $.isTrash}}
+                    <form method="POST" action="/mail/restore/{{.ID}}" class="row-del"
+                          onsubmit="event.stopPropagation(); return confirm('确定要恢复这封邮件吗？');">
+                        <button type="submit" class="icon-btn" title="恢复到收件箱">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                        </button>
+                    </form>
+                    {{else}}
                     <form method="POST" action="/mail/delete/{{.ID}}" class="row-del"
-                          onsubmit="return confirm('确定要删除这封邮件吗？');">
+                          onsubmit="event.stopPropagation(); return confirm('确定要删除这封邮件吗？');">
                         <button type="submit" class="icon-btn" title="删除">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                         </button>
                     </form>
+                    {{end}}
                 </li>
                 {{end}}
             </ul>
@@ -68,7 +94,7 @@
                 <span class="page-num">第 {{.page}} / {{if .totalPages}}{{.totalPages}}{{else}}1{{end}} 页</span>
                 <div class="pager">
                     {{if gt .page 1}}
-                    <a class="page-btn" href="/sent?page={{sub .page 1}}">
+                    <a class="page-btn" href="/folder/{{urlPath .folder}}?page={{sub .page 1}}">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
                         上一页
                     </a>
@@ -76,7 +102,7 @@
                     <span class="page-btn disabled">上一页</span>
                     {{end}}
                     {{if lt .page .totalPages}}
-                    <a class="page-btn" href="/sent?page={{add .page 1}}">
+                    <a class="page-btn" href="/folder/{{urlPath .folder}}?page={{add .page 1}}">
                         下一页
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
                     </a>
