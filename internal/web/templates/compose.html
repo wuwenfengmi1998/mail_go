@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>写信 - MailGo</title>
-    <link href="https://cdn.quilljs.com/1.3.7/quill.snow.css" rel="stylesheet">
+    <link href="/static/vendor/quill/quill.snow.css" rel="stylesheet">
     {{template "styles" .}}
 </head>
 <body class="page-compose">
@@ -60,7 +60,7 @@
             </form>
         </main>
     </div>
-    <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
+    <script src="/static/vendor/quill/quill.min.js"></script>
     <script>
     var quill = new Quill('#editor', {
         theme: 'snow',

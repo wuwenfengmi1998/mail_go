@@ -320,6 +320,10 @@ func (ws *WebServer) registerRoutes() {
 	// Security headers on every response
 	ws.engine.Use(middleware.SecurityHeaders())
 
+	// 静态资源（本地化的 Quill 编辑器等第三方前端库）。
+	// 同源加载以满足 CSP script-src/style-src 'self'，且服务器离线可用。
+	ws.engine.Static("/static", "internal/web/static")
+
 	// Public routes (no auth required)
 	ws.engine.GET("/login", authHandler.ShowLogin)
 	ws.engine.POST("/login", authHandler.DoLogin)

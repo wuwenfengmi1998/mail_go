@@ -13,6 +13,12 @@
 # Go 工具缓存
 vendor/
 
+# 例外：Web 端本地化的第三方前端库（Quill，CSP 要求同源加载）
+!internal/web/static/vendor/
+!internal/web/static/vendor/quill/
+!internal/web/static/vendor/quill/quill.min.js
+!internal/web/static/vendor/quill/quill.snow.css
+
 # 日志文件
 *.log
 
