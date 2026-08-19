@@ -258,7 +258,7 @@ func main() {
 	}
 
 	// 8. Start SMTP server（本地投递成功后触发 IMAP 新邮件推送）
-	smtpSrv := smtp_server.NewSMTPServer(cfg.SMTP, stores, attStorage, outboundMgr, smtpTLS, cfg.Ban, connHub, imapSrv.NotifyNewMessage)
+	smtpSrv := smtp_server.NewSMTPServer(cfg.SMTP, stores, attStorage, outboundMgr, smtpTLS, cfg.Ban, connHub, imapSrv)
 	go func() {
 		if err := smtpSrv.Start(); err != nil {
 			log.Printf("SMTP 服务启动失败: %v", err)
@@ -279,7 +279,7 @@ func main() {
 	}
 
 	// 9. Start POP3 server
-	pop3Srv := pop3_server.NewPOP3Server(cfg.POP3, stores, pop3TLS, cfg.Ban, connHub)
+	pop3Srv := pop3_server.NewPOP3Server(cfg.POP3, stores, pop3TLS, cfg.Ban, connHub, imapSrv)
 	go func() {
 		if err := pop3Srv.Start(); err != nil {
 			log.Printf("POP3 服务启动失败: %v", err)
@@ -295,7 +295,7 @@ func main() {
 	}
 
 	// 10. Start Web server（本地写信投递成功后同样触发 IMAP 新邮件推送）
-	webServer, err := web.NewWebServer(cfg.Web, stores, attStorage, cfg.Storage, cfg.Auth, cfg.Ban, cfg.Caddy, outboundMgr, connHub, imapSrv.NotifyNewMessage)
+	webServer, err := web.NewWebServer(cfg.Web, stores, attStorage, cfg.Storage, cfg.Auth, cfg.Ban, cfg.Caddy, outboundMgr, connHub, imapSrv)
 	if err != nil {
 		log.Fatalf("Web 服务初始化失败: %v", err)
 	}

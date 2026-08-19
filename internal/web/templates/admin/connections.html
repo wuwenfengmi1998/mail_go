@@ -61,6 +61,7 @@
                                 <th>连接时间</th>
                                 <th>时长</th>
                                 <th>最后活跃</th>
+                                <th>操作</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -79,9 +80,15 @@
                                 <td>{{.Connected.Format "2006-01-02 15:04:05"}}</td>
                                 <td>{{durationSeconds ($.now.Sub .Connected)}}s</td>
                                 <td>{{.LastActive.Format "2006-01-02 15:04:05"}}</td>
+                                <td>
+                                    <form method="POST" action="/admin/connections/{{.ID}}/disconnect" style="display:inline;"
+                                          onsubmit="return confirm('确定要断开 IP {{.IP}} 的所有连接并加入黑名单（180 天）吗？');">
+                                        <button type="submit" class="btn btn-sm btn-danger">断开并封禁</button>
+                                    </form>
+                                </td>
                             </tr>
                             {{else}}
-                            <tr><td colspan="9" style="text-align:center;color:#7f8c8d;">当前没有活动连接</td></tr>
+                            <tr><td colspan="10" style="text-align:center;color:#7f8c8d;">当前没有活动连接</td></tr>
                             {{end}}
                         </tbody>
                     </table>

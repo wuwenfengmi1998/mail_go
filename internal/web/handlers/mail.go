@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"mail_go/internal/db"
+	"mail_go/internal/imap_server"
 	"mail_go/internal/outbound"
-	"mail_go/internal/smtp_server"
 	"mail_go/internal/storage"
 	"mail_go/internal/store"
 
@@ -50,14 +50,14 @@ type MailHandler struct {
 	stores   *store.Stores
 	storage  *storage.AttachmentStorage
 	outbound *outbound.Manager
-	// notify 本地投递成功通知（IMAP 新邮件推送），可空
-	notify smtp_server.NewMailNotify
+	// pusher 邮件状态变化推送（IMAP 客户端实时同步），可空
+	pusher imap_server.Pusher
 }
 
 // NewMailHandler creates a new MailHandler with the given stores, attachment
 // storage and outbound delivery manager.
-func NewMailHandler(stores *store.Stores, attStorage *storage.AttachmentStorage, ob *outbound.Manager, notify smtp_server.NewMailNotify) *MailHandler {
-	return &MailHandler{stores: stores, storage: attStorage, outbound: ob, notify: notify}
+func NewMailHandler(stores *store.Stores, attStorage *storage.AttachmentStorage, ob *outbound.Manager, pusher imap_server.Pusher) *MailHandler {
+	return &MailHandler{stores: stores, storage: attStorage, outbound: ob, pusher: pusher}
 }
 
 // folderCounts returns sidebar badge counts for the current user.
@@ -386,8 +386,8 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 			return
 		}
 		// 本地投递成功 → IMAP 新邮件推送（IDLE 客户端实时收到通知）
-		if h.notify != nil {
-			h.notify(rcptUser.Username+"@"+rcptUser.Domain.Name, inboxMsg)
+		if h.pusher != nil {
+			h.pusher.PushNewMessage(rcptUser.Username+"@"+rcptUser.Domain.Name, inboxMsg)
 		}
 	}
 
@@ -638,7 +638,29 @@ func (h *MailHandler) Delete(c *gin.Context) {
 		_ = h.stores.Users.UpdateUsedBytes(userID, -att.FileSize)
 	}
 	_ = h.stores.Attachments.DeleteByMessage(uint(id))
+
+	// 删除前计算消息在所属文件夹中的序号（用于 Expunge 推送）
+	var seq uint32
+	if msgs, err := h.stores.Mails.ListAllByUserAndFolder(userID, msg.Folder); err == nil {
+		for i := range msgs {
+			if msgs[i].ID == uint(id) {
+				seq = uint32(i + 1)
+				break
+			}
+		}
+	}
 	_ = h.stores.Mails.Delete(uint(id))
+
+	// 删除 → 推送给该用户的其他 IMAP 客户端
+	if h.pusher != nil && seq > 0 {
+		userEmail := ""
+		if cu, ok := c.Get("currentUser"); ok {
+			if u, ok := cu.(*db.User); ok {
+				userEmail = u.Username + "@" + u.Domain.Name
+			}
+		}
+		h.pusher.PushExpunged(userEmail, msg.Folder, []uint32{seq})
+	}
 
 	// Redirect back based on the folder（仅同站相对路径，防开放重定向）
 	referer := safeRedirectPath(c.GetHeader("Referer"))
@@ -664,6 +686,18 @@ func (h *MailHandler) MarkRead(c *gin.Context) {
 	}
 
 	_ = h.stores.Mails.MarkRead(uint(id))
+
+	// 已读变化 → 推送给该用户的其他 IMAP 客户端
+	if h.pusher != nil {
+		msg.IsRead = true
+		userEmail := ""
+		if cu, ok := c.Get("currentUser"); ok {
+			if u, ok := cu.(*db.User); ok {
+				userEmail = u.Username + "@" + u.Domain.Name
+			}
+		}
+		h.pusher.PushFlagsChanged(userEmail, msg.Folder, msg)
+	}
 
 	// Redirect back based on the folder（仅同站相对路径，防开放重定向）
 	referer := safeRedirectPath(c.GetHeader("Referer"))

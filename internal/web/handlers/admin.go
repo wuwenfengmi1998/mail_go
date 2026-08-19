@@ -43,6 +43,42 @@ func NewAdminHandler(stores *store.Stores, attStorage *storage.AttachmentStorage
 	return &AdminHandler{stores: stores, storage: attStorage, tlsDir: tlsDir, caddyDataDir: caddyDataDir, outbound: ob, protocolLogKeepDays: protocolLogKeepDays, hub: hub}
 }
 
+// manualBanDuration 管理员手动封禁时长（180 天，与自动封禁档位上限制一致）。
+const manualBanDuration = 180 * 24 * time.Hour
+
+// DisconnectConnection 强制断开指定连接并封禁其 IP（管理后台「断开并封禁」）。
+// 封禁后该 IP 的所有在线连接一并断开。
+func (h *AdminHandler) DisconnectConnection(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.String(http.StatusBadRequest, "无效的连接ID")
+		return
+	}
+
+	conn, ok := h.hub.Get(id)
+	if !ok {
+		c.String(http.StatusNotFound, "连接不存在或已断开")
+		return
+	}
+
+	// 加入黑名单：180 天封禁（管理员可随时解封）
+	if err := h.stores.Bans.Create(&db.BanEntry{
+		IPAddress: conn.IP,
+		Reason:    "管理员手动封禁（连接断开）",
+		FailCount: 0,
+		BanCount:  0,
+		ExpiresAt: time.Now().Add(manualBanDuration),
+	}); err != nil {
+		c.String(http.StatusInternalServerError, "封禁失败: %v", err)
+		return
+	}
+
+	// 断开该 IP 的全部连接（含本连接与其他协议连接）
+	n := h.hub.DisconnectByIP(conn.IP)
+	log.Printf("admin: 已封禁并断开 IP %s 的 %d 个连接", conn.IP, n)
+	c.Redirect(http.StatusFound, "/admin/connections")
+}
+
 // ListConnections 渲染当前协议连接页面（SMTP/IMAP/POP3 实时连接）。
 func (h *AdminHandler) ListConnections(c *gin.Context) {
 	conns := h.hub.List()

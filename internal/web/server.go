@@ -15,9 +15,9 @@ import (
 
 	"mail_go/config"
 	"mail_go/internal/connhub"
+	"mail_go/internal/imap_server"
 	"mail_go/internal/mailutil"
 	"mail_go/internal/outbound"
-	"mail_go/internal/smtp_server"
 	"mail_go/internal/storage"
 	"mail_go/internal/store"
 	"mail_go/internal/web/handlers"
@@ -54,8 +54,8 @@ type WebServer struct {
 	caddyDataDir string
 	outbound     *outbound.Manager
 	hub          *connhub.Hub
-	// notify 本地投递成功通知（IMAP 新邮件推送），可空
-	notify smtp_server.NewMailNotify
+	// pusher 邮件状态变化推送（IMAP 客户端实时同步），可空
+	pusher imap_server.Pusher
 }
 
 // templateFuncs returns custom template functions for rendering.
@@ -179,7 +179,7 @@ func avatarStyle(s string) string {
 
 // NewWebServer creates a new WebServer, initializes the Gin engine,
 // configures sessions, middleware, and registers all routes.
-func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, storageCfg config.StorageConfig, authCfg config.AuthConfig, banCfg config.BanConfig, caddyCfg config.CaddyConfig, ob *outbound.Manager, hub *connhub.Hub, notify smtp_server.NewMailNotify) (*WebServer, error) {
+func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, storageCfg config.StorageConfig, authCfg config.AuthConfig, banCfg config.BanConfig, caddyCfg config.CaddyConfig, ob *outbound.Manager, hub *connhub.Hub, pusher imap_server.Pusher) (*WebServer, error) {
 	if err := config.ValidateSecretKey(cfg.SecretKey); err != nil {
 		return nil, err
 	}
@@ -226,7 +226,7 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 		caddyDataDir: caddyCfg.DataDir,
 		outbound:     ob,
 		hub:          hub,
-		notify:       notify,
+		pusher:       pusher,
 	}
 
 	ws.registerRoutes()
@@ -236,7 +236,7 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 // registerRoutes sets up all HTTP routes with their handlers and middleware.
 func (ws *WebServer) registerRoutes() {
 	authHandler := handlers.NewAuthHandler(ws.stores, ws.authCfg, ws.banCfg)
-	mailHandler := handlers.NewMailHandler(ws.stores, ws.storage, ws.outbound, ws.notify)
+	mailHandler := handlers.NewMailHandler(ws.stores, ws.storage, ws.outbound, ws.pusher)
 	adminHandler := handlers.NewAdminHandler(ws.stores, ws.storage, filepath.Join(ws.storageCfg.BaseDir, "tls", "domains"), ws.caddyDataDir, ws.outbound, ws.cfg.ProtocolLogKeepDays, ws.hub)
 
 	// Apply BanMiddleware globally before public routes
@@ -308,6 +308,7 @@ func (ws *WebServer) registerRoutes() {
 		admin.GET("/protocol-logs", adminHandler.ListProtocolLogs)
 		admin.POST("/protocol-logs/cleanup", adminHandler.CleanupProtocolLogs)
 		admin.GET("/connections", adminHandler.ListConnections)
+		admin.POST("/connections/:id/disconnect", adminHandler.DisconnectConnection)
 	}
 }
 

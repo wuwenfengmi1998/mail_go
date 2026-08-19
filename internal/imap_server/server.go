@@ -18,6 +18,17 @@ import (
 	imapserver "github.com/emersion/go-imap/server"
 )
 
+// Pusher 是 IMAP 实时推送接口：SMTP/POP3/Web 在邮件状态变化后调用，
+// 由 go-imap 广播给相关客户端（按用户名+邮箱过滤，IDLE 时即时送达）。
+type Pusher interface {
+	// PushNewMessage 推送新邮件（本地投递成功）。
+	PushNewMessage(userEmail string, msg *db.Message)
+	// PushFlagsChanged 推送已读/星标等标志变化（MessageUpdate）。
+	PushFlagsChanged(userEmail, mailbox string, msg *db.Message)
+	// PushExpunged 推送邮件被删除（ExpungeUpdate，seqNums 为删除前序号）。
+	PushExpunged(userEmail, mailbox string, seqNums []uint32)
+}
+
 // IMAPServer wraps a go-imap Server and provides mailbox access capability.
 type IMAPServer struct {
 	stores    *store.Stores
@@ -27,7 +38,8 @@ type IMAPServer struct {
 	hub       *connhub.Hub
 
 	beMu sync.Mutex
-	bes  []*imapBackend // 各监听器（明文/TLS）的 backend，用于新邮件推送
+	bes  []*imapBackend       // 各监听器（明文/TLS）的 backend，用于新邮件推送
+	srvs []*imapserver.Server // 各监听器实例，用于强制断开连接
 }
 
 // NewIMAPServer creates a new IMAP server instance. tlsLoader may be nil
@@ -45,15 +57,45 @@ func NewIMAPServer(cfg config.IMAPConfig, stores *store.Stores, tlsLoader *tlsut
 // NotifyNewMessage 向所有 IMAP 监听器推送新邮件通知（go-imap 广播时按
 // 用户名+邮箱过滤，只送达已选中 INBOX 的客户端，IDLE 挂起时实时收到
 // FETCH 响应）。由 SMTP/Web 本地投递成功时调用；channel 满时非阻塞丢弃。
-func (s *IMAPServer) NotifyNewMessage(userEmail string, msg *db.Message) {
+func (s *IMAPServer) PushNewMessage(userEmail string, msg *db.Message) {
 	if s == nil || userEmail == "" || msg == nil {
 		return
 	}
-	update := buildNewMessageUpdate(s.stores, userEmail, msg)
+	update := buildNewMessageUpdate(s.stores, userEmail, "INBOX", msg)
 	if update == nil {
 		return
 	}
+	s.broadcastUpdate(update, userEmail, msg.ID)
+}
 
+// PushFlagsChanged 推送邮件标志（已读/星标等）变化给同用户的其他客户端。
+func (s *IMAPServer) PushFlagsChanged(userEmail, mailbox string, msg *db.Message) {
+	if s == nil || userEmail == "" || mailbox == "" || msg == nil {
+		return
+	}
+	update := buildFlagsUpdate(s.stores, userEmail, mailbox, msg, false)
+	if update == nil {
+		return
+	}
+	s.broadcastUpdate(update, userEmail, msg.ID)
+}
+
+// PushExpunged 推送邮件被删除（每条序号一个 ExpungeUpdate）。
+func (s *IMAPServer) PushExpunged(userEmail, mailbox string, seqNums []uint32) {
+	if s == nil || userEmail == "" || mailbox == "" || len(seqNums) == 0 {
+		return
+	}
+	for _, seq := range seqNums {
+		update := &backend.ExpungeUpdate{
+			Update: backend.NewUpdate(userEmail, mailbox),
+			SeqNum: seq,
+		}
+		s.broadcastUpdate(update, userEmail, 0)
+	}
+}
+
+// broadcastUpdate 把一条更新非阻塞地投递到所有监听器的推送通道。
+func (s *IMAPServer) broadcastUpdate(update backend.Update, userEmail string, msgID uint) {
 	s.beMu.Lock()
 	bes := append([]*imapBackend(nil), s.bes...)
 	s.beMu.Unlock()
@@ -62,7 +104,7 @@ func (s *IMAPServer) NotifyNewMessage(userEmail string, msg *db.Message) {
 		select {
 		case b.updates <- update:
 		default:
-			log.Printf("IMAP: 新邮件推送通道已满，丢弃 %s 的更新 (msg=%d)", userEmail, msg.ID)
+			log.Printf("IMAP: 推送通道已满，丢弃 %s 的更新 (msg=%d)", userEmail, msgID)
 		}
 	}
 }
@@ -72,6 +114,33 @@ func (s *IMAPServer) registerBackend(be *imapBackend) {
 	s.beMu.Lock()
 	s.bes = append(s.bes, be)
 	s.beMu.Unlock()
+}
+
+// registerServer 记录监听器实例（用于强制断开连接）。
+func (s *IMAPServer) registerServer(srv *imapserver.Server) {
+	s.beMu.Lock()
+	s.srvs = append(s.srvs, srv)
+	s.beMu.Unlock()
+}
+
+// DisconnectByAddr 强制断开指定远端地址的连接（管理后台「断开并封禁」）。
+// 关闭连接会触发 go-imap 的收尾流程（user.Logout、协议日志回填、hub 注销）。
+func (s *IMAPServer) DisconnectByAddr(remoteAddr string) {
+	if s == nil || remoteAddr == "" {
+		return
+	}
+	s.beMu.Lock()
+	srvs := append([]*imapserver.Server(nil), s.srvs...)
+	s.beMu.Unlock()
+
+	for _, srv := range srvs {
+		srv.ForEachConn(func(conn imapserver.Conn) {
+			info := conn.Info()
+			if info != nil && info.RemoteAddr != nil && info.RemoteAddr.String() == remoteAddr {
+				_ = conn.Close()
+			}
+		})
+	}
 }
 
 func (s *IMAPServer) tlsConfig() (*tls.Config, error) {
@@ -85,17 +154,19 @@ func (s *IMAPServer) tlsConfig() (*tls.Config, error) {
 // newServer creates a configured imapserver.Server with the given address.
 func (s *IMAPServer) newServer(addr string, tlsConfig *tls.Config) *imapserver.Server {
 	be := &imapBackend{
-		stores:  s.stores,
-		banCfg:  s.banCfg,
-		port:    portOf(addr),
-		hub:     s.hub,
-		updates: make(chan backend.Update, 256),
+		stores:         s.stores,
+		banCfg:         s.banCfg,
+		port:           portOf(addr),
+		hub:            s.hub,
+		updates:        make(chan backend.Update, 256),
+		disconnectAddr: s.DisconnectByAddr,
 	}
 	s.registerBackend(be)
 	srv := imapserver.New(be)
 	srv.Addr = addr
 	srv.TLSConfig = tlsConfig
 	srv.AllowInsecureAuth = tlsConfig == nil
+	s.registerServer(srv)
 	return srv
 }
 

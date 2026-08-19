@@ -15,8 +15,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// TestNotifyNewMessage 验证本地投递成功后推送的 MessageUpdate 内容正确。
-func TestNotifyNewMessage(t *testing.T) {
+// TestPushNewMessage 验证本地投递成功后推送的 MessageUpdate 内容正确。
+func TestPushNewMessage(t *testing.T) {
 	gdb, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "test.db")), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -61,7 +61,7 @@ func TestNotifyNewMessage(t *testing.T) {
 	// 模拟明文 + TLS 两个监听器（生产环境由 Start/StartTLS 注册）
 	srv.newServer("127.0.0.1:143", nil)
 	srv.newServer("127.0.0.1:993", nil)
-	srv.NotifyNewMessage(email, inboxMsg)
+	srv.PushNewMessage(email, inboxMsg)
 
 	// 两个监听器（明文/TLS）各有一个 backend 通道，都应收到同一更新
 	srv.beMu.Lock()
@@ -99,8 +99,8 @@ func TestNotifyNewMessage(t *testing.T) {
 	}
 }
 
-// TestNotifyNewMessageChannelFull 验证通道满时推送不阻塞（非阻塞丢弃）。
-func TestNotifyNewMessageChannelFull(t *testing.T) {
+// TestPushNewMessageChannelFull 验证通道满时推送不阻塞（非阻塞丢弃）。
+func TestPushNewMessageChannelFull(t *testing.T) {
 	gdb, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "test.db")), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -127,22 +127,123 @@ func TestNotifyNewMessageChannelFull(t *testing.T) {
 				b.updates <- backend.NewUpdate("a@b", "INBOX")
 			}
 		}
-		srv.NotifyNewMessage("a@b", msg)
+		srv.PushNewMessage("a@b", msg)
 		close(done)
 	}()
 
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("NotifyNewMessage blocked on full channel")
+		t.Fatal("PushNewMessage blocked on full channel")
 	}
 }
 
-// TestNotifyNewMessageNilSafe 验证空参数/空指针安全。
-func TestNotifyNewMessageNilSafe(t *testing.T) {
+// TestPushNewMessageNilSafe 验证空参数/空指针安全。
+func TestPushNewMessageNilSafe(t *testing.T) {
 	var srv *IMAPServer
-	srv.NotifyNewMessage("a@b", &db.Message{ID: 1}) // 不应 panic
+	srv.PushNewMessage("a@b", &db.Message{ID: 1}) // 不应 panic
 	srv = NewIMAPServer(config.IMAPConfig{}, nil, nil, config.BanConfig{}, nil)
-	srv.NotifyNewMessage("", &db.Message{ID: 1}) // 空邮箱
-	srv.NotifyNewMessage("a@b", nil)             // 空消息
+	srv.PushNewMessage("", &db.Message{ID: 1}) // 空邮箱
+	srv.PushNewMessage("a@b", nil)             // 空消息
+}
+
+// TestPushFlagsChanged 验证标志变化（已读/星标）推送内容正确。
+func TestPushFlagsChanged(t *testing.T) {
+	gdb, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "test.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := gdb.AutoMigrate(&db.User{}, &db.Domain{}, &db.Message{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	stores := store.NewStores(gdb)
+
+	domain := &db.Domain{Name: "example.com"}
+	if err := stores.Domains.Create(domain); err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+	user := &db.User{Username: "alice", DomainID: domain.ID, IsActive: true}
+	if err := stores.Users.Create(user); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	msg := &db.Message{UserID: user.ID, Folder: "INBOX", FromAddr: "x@y", Subject: "s", Date: time.Now()}
+	if err := stores.Mails.Create(msg); err != nil {
+		t.Fatalf("create message: %v", err)
+	}
+	msg.IsRead = true
+	msg.IsFlagged = true
+
+	hub := connhub.New()
+	srv := NewIMAPServer(config.IMAPConfig{}, stores, nil, config.BanConfig{}, hub)
+	srv.newServer("127.0.0.1:143", nil)
+	srv.PushFlagsChanged("alice@example.com", "INBOX", msg)
+
+	srv.beMu.Lock()
+	b := srv.bes[0]
+	srv.beMu.Unlock()
+
+	select {
+	case upd := <-b.updates:
+		mu, ok := upd.(*backend.MessageUpdate)
+		if !ok {
+			t.Fatalf("update type = %T, want *MessageUpdate", upd)
+		}
+		if mu.Username() != "alice@example.com" || mu.Mailbox() != "INBOX" {
+			t.Fatalf("update targeting = %s/%s", mu.Username(), mu.Mailbox())
+		}
+		if mu.Message.Uid != uint32(msg.ID) {
+			t.Fatalf("uid = %d, want %d", mu.Message.Uid, msg.ID)
+		}
+		got := make(map[string]bool)
+		for _, f := range mu.Message.Flags {
+			got[f] = true
+		}
+		if !got["\\Seen"] || !got["\\Flagged"] {
+			t.Fatalf("flags = %v, want \\Seen and \\Flagged", mu.Message.Flags)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no flags update received")
+	}
+}
+
+// TestPushExpunged 验证删除推送：每条序号一个 ExpungeUpdate。
+func TestPushExpunged(t *testing.T) {
+	gdb, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "test.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := gdb.AutoMigrate(&db.Message{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	stores := store.NewStores(gdb)
+
+	hub := connhub.New()
+	srv := NewIMAPServer(config.IMAPConfig{}, stores, nil, config.BanConfig{}, hub)
+	srv.newServer("127.0.0.1:143", nil)
+	srv.PushExpunged("alice@example.com", "INBOX", []uint32{2, 5})
+
+	srv.beMu.Lock()
+	b := srv.bes[0]
+	srv.beMu.Unlock()
+
+	var seqs []uint32
+	for i := 0; i < 2; i++ {
+		select {
+		case upd := <-b.updates:
+			eu, ok := upd.(*backend.ExpungeUpdate)
+			if !ok {
+				t.Fatalf("update type = %T, want *ExpungeUpdate", upd)
+			}
+			if eu.Username() != "alice@example.com" || eu.Mailbox() != "INBOX" {
+				t.Fatalf("update targeting = %s/%s", eu.Username(), eu.Mailbox())
+			}
+			seqs = append(seqs, eu.SeqNum)
+		case <-time.After(time.Second):
+			t.Fatal("no expunge update received")
+		}
+	}
+	if seqs[0] != 2 || seqs[1] != 5 {
+		t.Fatalf("seqs = %v, want [2 5]", seqs)
+	}
 }

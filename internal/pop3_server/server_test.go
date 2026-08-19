@@ -160,3 +160,90 @@ func TestPop3CommandDetail(t *testing.T) {
 		t.Fatalf("empty detail = %q", empty)
 	}
 }
+
+// mockPusher 记录推送调用的测试桩。
+type mockPusher struct {
+	expunged []struct {
+		Email   string
+		Mailbox string
+		Seqs    []uint32
+	}
+}
+
+func (m *mockPusher) PushNewMessage(string, *db.Message)           {}
+func (m *mockPusher) PushFlagsChanged(string, string, *db.Message) {}
+func (m *mockPusher) PushExpunged(email, mailbox string, seqs []uint32) {
+	m.expunged = append(m.expunged, struct {
+		Email   string
+		Mailbox string
+		Seqs    []uint32
+	}{email, mailbox, seqs})
+}
+
+// TestExpungePushesIMAPUpdate 验证 POP3 删除邮件后向 IMAP 推送 Expunge。
+func TestExpungePushesIMAPUpdate(t *testing.T) {
+	s := newTestServer(t)
+	pusher := &mockPusher{}
+	s.pusher = pusher
+
+	domain := &db.Domain{Name: "example.com"}
+	if err := s.stores.Domains.Create(domain); err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+	user := &db.User{Username: "alice", DomainID: domain.ID, IsActive: true}
+	hashed, _ := bcrypt.GenerateFromPassword([]byte("secret123"), bcrypt.DefaultCost)
+	user.PasswordHash = string(hashed)
+	if err := s.stores.Users.Create(user); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		msg := &db.Message{UserID: user.ID, Folder: "INBOX", FromAddr: "x@y", Subject: "m", Date: time.Now()}
+		if err := s.stores.Mails.Create(msg); err != nil {
+			t.Fatalf("create message %d: %v", i, err)
+		}
+	}
+
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.handleConn(server, 110)
+	}()
+
+	br := bufio.NewReader(client)
+	br.ReadString('\n')
+	client.Write([]byte("USER alice@example.com\r\n"))
+	br.ReadString('\n')
+	client.Write([]byte("PASS secret123\r\n"))
+	br.ReadString('\n')
+	// 删除第 1 封后退出
+	client.Write([]byte("DELE 1\r\n"))
+	br.ReadString('\n')
+	client.Write([]byte("QUIT\r\n"))
+	br.ReadString('\n')
+	client.Close()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handleConn did not return")
+	}
+
+	if len(pusher.expunged) != 1 {
+		t.Fatalf("expunge pushes = %d, want 1", len(pusher.expunged))
+	}
+	p := pusher.expunged[0]
+	if p.Email != "alice@example.com" || p.Mailbox != "INBOX" {
+		t.Fatalf("push target = %s/%s", p.Email, p.Mailbox)
+	}
+	if len(p.Seqs) != 1 || p.Seqs[0] != 1 {
+		t.Fatalf("seqs = %v, want [1]", p.Seqs)
+	}
+	// 邮件确实已删除
+	if n, _ := s.stores.Mails.CountByUserAndFolder(user.ID, "INBOX"); n != 2 {
+		t.Fatalf("inbox count = %d, want 2", n)
+	}
+}

@@ -20,6 +20,9 @@ type Conn struct {
 	LastActive time.Time
 
 	hub *Hub
+	// disconnect 强制断开底层连接的回调（由各协议服务器注册）。
+	// 关闭底层 socket 后协议服务器会正常走收尾清理（Logout/注销）。
+	disconnect func()
 }
 
 // Hub 管理所有活动连接（同一把锁保护注册表与连接字段）。
@@ -88,6 +91,16 @@ func (c *Conn) Touch() {
 	c.hub.mu.Unlock()
 }
 
+// SetDisconnect 注册强制断开底层连接的回调（管理后台「断开并封禁」用）。
+func (c *Conn) SetDisconnect(fn func()) {
+	if c == nil || c.hub == nil {
+		return
+	}
+	c.hub.mu.Lock()
+	c.disconnect = fn
+	c.hub.mu.Unlock()
+}
+
 // Close 从注册中心移除该连接。
 func (c *Conn) Close() {
 	if c == nil || c.hub == nil {
@@ -96,6 +109,53 @@ func (c *Conn) Close() {
 	c.hub.mu.Lock()
 	delete(c.hub.conns, c.ID)
 	c.hub.mu.Unlock()
+}
+
+// Get 按 ID 查找活动连接。
+func (h *Hub) Get(id uint64) (*Conn, bool) {
+	if h == nil {
+		return nil, false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	c, ok := h.conns[id]
+	return c, ok
+}
+
+// Disconnect 强制断开指定连接（关闭底层连接并注销）。
+func (h *Hub) Disconnect(id uint64) bool {
+	c, ok := h.Get(id)
+	if !ok {
+		return false
+	}
+	h.mu.Lock()
+	fn := c.disconnect
+	h.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+	return true
+}
+
+// DisconnectByIP 强制断开该 IP 的全部连接，返回断开的连接数。
+// 用于封禁 IP 后立即踢掉其所有在线会话。
+func (h *Hub) DisconnectByIP(ip string) int {
+	if h == nil || ip == "" {
+		return 0
+	}
+	h.mu.Lock()
+	var fns []func()
+	for _, c := range h.conns {
+		if c.IP == ip && c.disconnect != nil {
+			fns = append(fns, c.disconnect)
+		}
+	}
+	h.mu.Unlock()
+
+	for _, fn := range fns {
+		fn()
+	}
+	return len(fns)
 }
 
 // List 返回当前所有活动连接（拷贝），按连接时间升序。

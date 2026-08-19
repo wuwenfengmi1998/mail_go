@@ -34,6 +34,8 @@ type imapBackend struct {
 
 	// updates 承载新邮件等后端更新，由 go-imap 服务器广播给相关客户端。
 	updates chan backend.Update
+	// disconnectAddr 强制断开指定远端地址的连接（管理后台断开封禁用）。
+	disconnectAddr func(addr string)
 }
 
 // Updates 实现 backend.BackendUpdater：新邮件推送通道（广播按用户名与
@@ -42,28 +44,20 @@ func (b *imapBackend) Updates() <-chan backend.Update {
 	return b.updates
 }
 
-// buildNewMessageUpdate 为一条新投递到 INBOX 的邮件构造 IMAP 更新。
-// seq 取该邮件在 INBOX 中的序号（通知时机在入库之后，取当前 INBOX 长度）。
-func buildNewMessageUpdate(stores *store.Stores, userEmail string, msg *db.Message) *backend.MessageUpdate {
-	if stores == nil || msg == nil || userEmail == "" {
+// buildNewMessageUpdate 为一条新投递到 mailbox 的邮件构造 IMAP 更新。
+// seq 取该邮件在邮箱中的序号（通知时机在入库之后，取当前列表长度）。
+func buildNewMessageUpdate(stores *store.Stores, userEmail, mailbox string, msg *db.Message) *backend.MessageUpdate {
+	if stores == nil || msg == nil || userEmail == "" || mailbox == "" {
 		return nil
 	}
 	seq := uint32(1)
-	if msgs, err := stores.Mails.ListAllByUserAndFolder(msg.UserID, "INBOX"); err == nil {
+	if msgs, err := stores.Mails.ListAllByUserAndFolder(msg.UserID, mailbox); err == nil {
 		seq = uint32(len(msgs))
-	}
-
-	flags := make([]string, 0, 2)
-	if msg.IsRead {
-		flags = append(flags, "\\Seen")
-	}
-	if msg.IsFlagged {
-		flags = append(flags, "\\Flagged")
 	}
 
 	imapMsg := imap.NewMessage(seq, []imap.FetchItem{imap.FetchUid, imap.FetchFlags, imap.FetchInternalDate, imap.FetchRFC822Size, imap.FetchEnvelope})
 	imapMsg.Uid = uint32(msg.ID)
-	imapMsg.Flags = flags
+	imapMsg.Flags = flagsOf(msg.IsRead, msg.IsFlagged, false)
 	imapMsg.InternalDate = msg.Date
 	imapMsg.Size = uint32(len(msg.RawData))
 	imapMsg.Envelope = &imap.Envelope{
@@ -78,8 +72,65 @@ func buildNewMessageUpdate(stores *store.Stores, userEmail string, msg *db.Messa
 	}
 
 	return &backend.MessageUpdate{
-		Update:  backend.NewUpdate(userEmail, "INBOX"),
+		Update:  backend.NewUpdate(userEmail, mailbox),
 		Message: imapMsg,
+	}
+}
+
+// buildFlagsUpdate 为一条消息的标志变化构造 IMAP 更新（已读/星标/删除标记）。
+// deleted 为会话内 \Deleted 标记（IMAP STORE 会话状态，不入库）。
+func buildFlagsUpdate(stores *store.Stores, userEmail, mailbox string, msg *db.Message, deleted bool) *backend.MessageUpdate {
+	if stores == nil || msg == nil || userEmail == "" || mailbox == "" {
+		return nil
+	}
+	imapMsg := imap.NewMessage(seqOf(stores, msg.UserID, mailbox, msg.ID),
+		[]imap.FetchItem{imap.FetchUid, imap.FetchFlags})
+	imapMsg.Uid = uint32(msg.ID)
+	imapMsg.Flags = flagsOf(msg.IsRead, msg.IsFlagged, deleted)
+	return &backend.MessageUpdate{
+		Update:  backend.NewUpdate(userEmail, mailbox),
+		Message: imapMsg,
+	}
+}
+
+// seqOf 返回消息在文件夹中的序号（1 基），未找到返回 0。
+func seqOf(stores *store.Stores, userID uint, mailbox string, msgID uint) uint32 {
+	msgs, err := stores.Mails.ListAllByUserAndFolder(userID, mailbox)
+	if err != nil {
+		return 0
+	}
+	for i := range msgs {
+		if msgs[i].ID == msgID {
+			return uint32(i + 1)
+		}
+	}
+	return 0
+}
+
+// flagsOf 按数据库状态生成 IMAP 标志列表（deleted 为会话内 \Deleted 标记）。
+func flagsOf(read, flagged, deleted bool) []string {
+	flags := make([]string, 0, 3)
+	if read {
+		flags = append(flags, "\\Seen")
+	}
+	if flagged {
+		flags = append(flags, "\\Flagged")
+	}
+	if deleted {
+		flags = append(flags, "\\Deleted")
+	}
+	return flags
+}
+
+// pushUpdate 非阻塞地把一条后端更新送入推送通道（满则丢弃并记日志）。
+func pushUpdate(ch chan backend.Update, u backend.Update) {
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- u:
+	default:
+		log.Printf("IMAP: 推送通道已满，丢弃更新")
 	}
 }
 
@@ -110,10 +161,19 @@ func (b *imapBackend) Login(connInfo *imap.ConnInfo, username, password string) 
 
 	logID := b.recordLogin(clientIP, username, true, "", "LOGIN 成功", 0, now)
 
-	// 连接追踪：注册到当前连接中心，Logout 时注销
+	// 连接追踪：注册到当前连接中心，Logout 时注销；
+	// 注册强制断开回调（按远端地址匹配，断开时由 go-imap 走正常收尾）。
 	conn := b.hub.Register("imap", clientIP, b.port, connInfo.TLS != nil)
 	if conn != nil {
 		conn.SetUser(email)
+		remoteAddr := ""
+		if connInfo.RemoteAddr != nil {
+			remoteAddr = connInfo.RemoteAddr.String()
+		}
+		if b.disconnectAddr != nil && remoteAddr != "" {
+			addr := remoteAddr
+			conn.SetDisconnect(func() { b.disconnectAddr(addr) })
+		}
 	}
 
 	return &imapUser{
@@ -124,6 +184,7 @@ func (b *imapBackend) Login(connInfo *imap.ConnInfo, username, password string) 
 		clientIP:  clientIP,
 		startedAt: now,
 		conn:      conn,
+		updates:   b.updates,
 	}, nil
 }
 
@@ -158,6 +219,8 @@ type imapUser struct {
 	clientIP  string
 	startedAt time.Time
 	conn      *connhub.Conn
+	// updates 所在 backend 的推送通道（STORE/EXPUNGE 等实时同步用）。
+	updates chan backend.Update
 }
 
 // Username returns the user's email address.
@@ -671,6 +734,9 @@ func (m *imapMailbox) CreateMessage(flags []string, date time.Time, body imap.Li
 		return fmt.Errorf("failed to create message: %w", err)
 	}
 
+	// 新邮件（IMAP APPEND）→ 推送给同用户其他已选中该邮箱的客户端
+	pushUpdate(m.user.updates, buildNewMessageUpdate(m.stores, m.user.email, m.name, msg))
+
 	return nil
 }
 
@@ -730,6 +796,15 @@ func (m *imapMailbox) UpdateMessagesFlags(uid bool, seqset *imap.SeqSet, op imap
 				applyFlag(flag, false)
 			}
 		}
+
+		// 标志变化（已读/星标/删除）→ 推送给同用户其他客户端
+		// （重新读库取最新状态，\Deleted 取会话内状态）
+		fresh, err := m.stores.Mails.GetByID(dbMsg.ID)
+		if err != nil {
+			continue
+		}
+		deleted := m.deleted != nil && m.deleted[dbMsg.ID]
+		pushUpdate(m.user.updates, buildFlagsUpdate(m.stores, m.user.email, m.name, fresh, deleted))
 	}
 
 	return nil
@@ -776,7 +851,10 @@ func (m *imapMailbox) CopyMessages(uid bool, seqset *imap.SeqSet, dest string) e
 		}
 		if err := m.stores.Mails.Create(copyMsg); err != nil {
 			log.Printf("IMAP: failed to copy message %d to %s: %v", dbMsg.ID, dest, err)
+			continue
 		}
+		// 目标邮箱新增 → 推送给同用户其他客户端
+		pushUpdate(m.user.updates, buildNewMessageUpdate(m.stores, m.user.email, dest, copyMsg))
 	}
 
 	return nil
@@ -806,6 +884,11 @@ func (m *imapMailbox) MoveMessages(uid bool, seqset *imap.SeqSet, dest string) e
 		}
 		if err := m.stores.Mails.MoveToFolder(dbMsg.ID, dest); err != nil {
 			log.Printf("IMAP: failed to move message %d to %s: %v", dbMsg.ID, dest, err)
+			continue
+		}
+		// 目标邮箱新增（移动后消息在 dest）→ 推送给同用户其他客户端
+		if moved, err := m.stores.Mails.GetByID(dbMsg.ID); err == nil {
+			pushUpdate(m.user.updates, buildNewMessageUpdate(m.stores, m.user.email, dest, moved))
 		}
 	}
 	return nil
@@ -817,12 +900,28 @@ func (m *imapMailbox) Expunge() error {
 		return nil
 	}
 
+	// 删除前计算各消息的序号（Expunge 响应序号为删除前状态下的序号）
+	var seqs []uint32
+	for msgID := range m.deleted {
+		if seq := seqOf(m.stores, m.user.id, m.name, msgID); seq > 0 {
+			seqs = append(seqs, seq)
+		}
+	}
+
 	for msgID := range m.deleted {
 		if err := m.stores.Mails.Delete(msgID); err != nil {
 			log.Printf("IMAP: failed to expunge message %d: %v", msgID, err)
 		}
 	}
 	m.deleted = make(map[uint]bool)
+
+	// 删除 → 推送给同用户其他客户端（每条序号一个 ExpungeUpdate）
+	for _, seq := range seqs {
+		pushUpdate(m.user.updates, &backend.ExpungeUpdate{
+			Update: backend.NewUpdate(m.user.email, m.name),
+			SeqNum: seq,
+		})
+	}
 	return nil
 }
 

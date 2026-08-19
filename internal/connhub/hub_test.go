@@ -2,6 +2,7 @@ package connhub
 
 import (
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -111,5 +112,66 @@ func TestListOrderedByID(t *testing.T) {
 		if list[i].ID <= list[i-1].ID {
 			t.Fatalf("list not ordered by ID: %+v", list)
 		}
+	}
+}
+
+// TestDisconnect 验证强制断开回调被调用。
+func TestDisconnect(t *testing.T) {
+	h := New()
+	var closed atomic.Int32
+
+	c1 := h.Register("smtp", "10.0.0.1", 25, false)
+	c1.SetDisconnect(func() { closed.Add(1) })
+	c2 := h.Register("imap", "10.0.0.2", 993, true)
+	c2.SetDisconnect(func() { closed.Add(1) })
+
+	if !h.Disconnect(c1.ID) {
+		t.Fatal("Disconnect should report success")
+	}
+	if closed.Load() != 1 {
+		t.Fatalf("closed = %d, want 1", closed.Load())
+	}
+	// 已断开（未注销）仍可查到
+	if _, ok := h.Get(c1.ID); !ok {
+		t.Fatal("conn should still be registered until Close")
+	}
+	// 不存在的 ID
+	if h.Disconnect(99999) {
+		t.Fatal("Disconnect of unknown id must fail")
+	}
+}
+
+// TestDisconnectByIP 验证封禁时断开该 IP 全部连接。
+func TestDisconnectByIP(t *testing.T) {
+	h := New()
+	var closed atomic.Int32
+
+	// 同一 IP 三个协议连接
+	for _, proto := range []string{"smtp", "imap", "pop3"} {
+		c := h.Register(proto, "203.0.113.5", 25, false)
+		c.SetDisconnect(func() { closed.Add(1) })
+	}
+	// 另一 IP 不受影响
+	other := h.Register("smtp", "203.0.113.6", 25, false)
+	other.SetDisconnect(func() { closed.Add(1) })
+
+	n := h.DisconnectByIP("203.0.113.5")
+	if n != 3 {
+		t.Fatalf("disconnected = %d, want 3", n)
+	}
+	if closed.Load() != 3 {
+		t.Fatalf("closed = %d, want 3", closed.Load())
+	}
+}
+
+// TestDisconnectNoCallback 验证未注册断开回调的连接安全跳过。
+func TestDisconnectNoCallback(t *testing.T) {
+	h := New()
+	c := h.Register("pop3", "10.0.0.9", 110, false)
+	if !h.Disconnect(c.ID) {
+		t.Fatal("Disconnect should report success even without callback")
+	}
+	if n := h.DisconnectByIP("10.0.0.9"); n != 0 {
+		t.Fatalf("disconnected = %d, want 0", n)
 	}
 }

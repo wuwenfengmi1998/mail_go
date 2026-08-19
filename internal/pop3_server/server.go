@@ -14,6 +14,7 @@ import (
 	"mail_go/config"
 	"mail_go/internal/connhub"
 	"mail_go/internal/db"
+	"mail_go/internal/imap_server"
 	"mail_go/internal/store"
 	"mail_go/internal/tlsutil"
 )
@@ -26,13 +27,14 @@ type POP3Server struct {
 	banCfg    config.BanConfig
 	tlsLoader *tlsutil.Loader
 	hub       *connhub.Hub
+	pusher    imap_server.Pusher // 邮件删除推送（IMAP 客户端同步），可空
 	wg        sync.WaitGroup
 }
 
 // NewPOP3Server creates a new POP3 server instance. tlsLoader may be nil
 // when TLS is not configured.
-func NewPOP3Server(cfg config.POP3Config, stores *store.Stores, tlsLoader *tlsutil.Loader, banCfg config.BanConfig, hub *connhub.Hub) *POP3Server {
-	return &POP3Server{stores: stores, cfg: cfg, banCfg: banCfg, tlsLoader: tlsLoader, hub: hub}
+func NewPOP3Server(cfg config.POP3Config, stores *store.Stores, tlsLoader *tlsutil.Loader, banCfg config.BanConfig, hub *connhub.Hub, pusher imap_server.Pusher) *POP3Server {
+	return &POP3Server{stores: stores, cfg: cfg, banCfg: banCfg, tlsLoader: tlsLoader, hub: hub, pusher: pusher}
 }
 
 func (s *POP3Server) tlsConfig() (*tls.Config, error) {
@@ -135,8 +137,12 @@ func (s *POP3Server) handleConn(conn net.Conn, port int) {
 		return
 	}
 
-	// 连接追踪：注册到当前连接中心，连接结束时注销
+	// 连接追踪：注册到当前连接中心，连接结束时注销；
+	// 强制断开：关闭底层连接（STLS 后 conn 变量已指向 tlsConn，同样生效）。
 	activeConn := s.hub.Register("pop3", clientIP, port, false)
+	if activeConn != nil {
+		activeConn.SetDisconnect(func() { _ = conn.Close() })
+	}
 
 	// 会话状态（供协议日志汇总）
 	var (
@@ -397,6 +403,9 @@ func (s *POP3Server) handlePASS(conn net.Conn, password string, user *db.User) (
 		return nil, nil, nil
 	}
 
+	// 保留完整邮箱作为登录标识（与 handleUSER 一致），便于推送/日志使用
+	authUser.Username = user.Username
+
 	messages := s.loadMessages(authUser)
 	deleted := make(map[int]bool)
 	sendResponse(conn, fmt.Sprintf("+OK authenticated, %d messages", len(messages)))
@@ -532,12 +541,14 @@ func (s *POP3Server) handleUIDL(conn net.Conn, arg string, messages []pop3Messag
 }
 
 // expungeDeleted actually deletes messages that were marked for deletion,
-// returning the number of messages deleted.
+// returning the number of messages deleted. 删除成功后向 IMAP 客户端推送
+// Expunge 通知（序号为删除前在 INBOX 中的位置）。
 func (s *POP3Server) expungeDeleted(messages []pop3Message, deleted map[int]bool, user *db.User) int {
 	if deleted == nil || user == nil || user.ID == 0 {
 		return 0
 	}
 	count := 0
+	var seqs []uint32
 	for seqNum, msgDeleted := range deleted {
 		if msgDeleted && seqNum >= 1 && seqNum <= len(messages) {
 			if err := s.stores.Mails.Delete(messages[seqNum-1].id); err != nil {
@@ -545,7 +556,11 @@ func (s *POP3Server) expungeDeleted(messages []pop3Message, deleted map[int]bool
 				continue
 			}
 			count++
+			seqs = append(seqs, uint32(seqNum))
 		}
+	}
+	if s.pusher != nil && len(seqs) > 0 && user.Username != "" {
+		s.pusher.PushExpunged(user.Username, "INBOX", seqs)
 	}
 	return count
 }

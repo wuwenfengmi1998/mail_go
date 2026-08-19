@@ -14,6 +14,7 @@ import (
 	"mail_go/config"
 	"mail_go/internal/connhub"
 	"mail_go/internal/db"
+	"mail_go/internal/imap_server"
 	"mail_go/internal/mailutil"
 	"mail_go/internal/outbound"
 	"mail_go/internal/storage"
@@ -33,10 +34,6 @@ const (
 	smtpModeImplicitTLS
 )
 
-// NewMailNotify 是本地新邮件投递完成后的通知回调（IMAP 推送用），
-// userEmail 为收件人完整邮箱，msg 为已入库的邮件。
-type NewMailNotify func(userEmail string, msg *db.Message)
-
 // SMTPServer wraps go-smtp servers and provides local mail delivery.
 type SMTPServer struct {
 	stores    *store.Stores
@@ -46,13 +43,13 @@ type SMTPServer struct {
 	banCfg    config.BanConfig
 	tlsLoader *tlsutil.Loader
 	hub       *connhub.Hub
-	notify    NewMailNotify // 本地投递成功通知（IMAP 新邮件推送），可空
+	pusher    imap_server.Pusher // 本地投递成功推送（IMAP 新邮件），可空
 }
 
 // NewSMTPServer creates a new SMTP server instance. tlsLoader may be nil
 // when TLS is not configured.
-func NewSMTPServer(cfg config.SMTPConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, ob *outbound.Manager, tlsLoader *tlsutil.Loader, banCfg config.BanConfig, hub *connhub.Hub, notify NewMailNotify) *SMTPServer {
-	return &SMTPServer{stores: stores, storage: attStorage, outbound: ob, cfg: cfg, banCfg: banCfg, tlsLoader: tlsLoader, hub: hub, notify: notify}
+func NewSMTPServer(cfg config.SMTPConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, ob *outbound.Manager, tlsLoader *tlsutil.Loader, banCfg config.BanConfig, hub *connhub.Hub, pusher imap_server.Pusher) *SMTPServer {
+	return &SMTPServer{stores: stores, storage: attStorage, outbound: ob, cfg: cfg, banCfg: banCfg, tlsLoader: tlsLoader, hub: hub, pusher: pusher}
 }
 
 func (s *SMTPServer) tlsConfig() (*tls.Config, error) {
@@ -119,6 +116,11 @@ type smtpBackend struct {
 func (be *smtpBackend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 	clientIP := store.ClientIPFromAddr(c.Conn().RemoteAddr())
 	conn := be.server.hub.Register("smtp", clientIP, be.server.sessionPort(be.mode), be.server.tlsActive(c))
+	if conn != nil {
+		// 强制断开：关闭底层连接后 go-smtp 读到 EOF，正常走 Logout 收尾
+		raw := c.Conn()
+		conn.SetDisconnect(func() { _ = raw.Close() })
+	}
 	return &smtpSession{
 		backend:   be,
 		mode:      be.mode,
@@ -350,8 +352,8 @@ func (s *smtpSession) Data(r io.Reader) error {
 		log.Printf("SMTP: message delivered to %s", rcpt)
 		localDelivered++
 		// 本地投递成功 → IMAP 新邮件推送（IDLE 客户端实时收到通知）
-		if notify := s.backend.server.notify; notify != nil && msg != nil {
-			notify(user.Username+"@"+user.Domain.Name, msg)
+		if pusher := s.backend.server.pusher; pusher != nil && msg != nil {
+			pusher.PushNewMessage(user.Username+"@"+user.Domain.Name, msg)
 		}
 	}
 	s.msgCount += localDelivered
