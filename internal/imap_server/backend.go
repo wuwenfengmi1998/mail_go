@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"mail_go/config"
 	"mail_go/internal/db"
 	"mail_go/internal/mailutil"
 	"mail_go/internal/store"
@@ -26,12 +27,22 @@ import (
 // imapBackend implements backend.Backend.
 type imapBackend struct {
 	stores *store.Stores
+	banCfg config.BanConfig
 }
 
 // Login authenticates a user by email and password.
 func (b *imapBackend) Login(connInfo *imap.ConnInfo, username, password string) (backend.User, error) {
+	clientIP := store.ClientIPFromAddr(connInfo.RemoteAddr)
+
+	// 已封禁 IP 一律拒绝认证（防协议层暴力破解）
+	if banned, _ := b.stores.Bans.IsBanned(clientIP); banned {
+		return nil, backend.ErrInvalidCredentials
+	}
+
 	user, err := b.stores.Users.Authenticate(username, password)
 	if err != nil {
+		// 认证失败计数，达到阈值封禁（与 Web 登录共用 ban_entries）
+		b.stores.RecordAuthFailure(clientIP, b.banCfg.MaxFailAttempts, b.banCfg.BanDurationMin)
 		return nil, fmt.Errorf("invalid credentials: %w", err)
 	}
 

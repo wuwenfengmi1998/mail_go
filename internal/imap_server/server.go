@@ -17,15 +17,17 @@ import (
 type IMAPServer struct {
 	stores    *store.Stores
 	cfg       config.IMAPConfig
+	banCfg    config.BanConfig
 	tlsLoader *tlsutil.Loader
 }
 
 // NewIMAPServer creates a new IMAP server instance. tlsLoader may be nil
 // when TLS is not configured.
-func NewIMAPServer(cfg config.IMAPConfig, stores *store.Stores, tlsLoader *tlsutil.Loader) *IMAPServer {
+func NewIMAPServer(cfg config.IMAPConfig, stores *store.Stores, tlsLoader *tlsutil.Loader, banCfg config.BanConfig) *IMAPServer {
 	return &IMAPServer{
 		stores:    stores,
 		cfg:       cfg,
+		banCfg:    banCfg,
 		tlsLoader: tlsLoader,
 	}
 }
@@ -40,7 +42,7 @@ func (s *IMAPServer) tlsConfig() (*tls.Config, error) {
 
 // newServer creates a configured imapserver.Server with the given address.
 func (s *IMAPServer) newServer(addr string, tlsConfig *tls.Config) *imapserver.Server {
-	be := &imapBackend{stores: s.stores}
+	be := &imapBackend{stores: s.stores, banCfg: s.banCfg}
 	srv := imapserver.New(be)
 	srv.Addr = addr
 	srv.TLSConfig = tlsConfig

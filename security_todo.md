@@ -63,65 +63,78 @@
 
 ### 5. 会话 Cookie 缺 Secure 标志
 
-- [ ] 位置：`internal/web/server.go:177-182`
+- [x] 位置：`internal/web/server.go`
 - 修复方案：
-  - [ ] `sessions.Options` 增加 `Secure: true`。
-  - [ ] 同时修正注释：当前 `SameSite: 3` 实为 Strict 而非注释所写的 Lax。
-  - [ ] （可选）新增配置项允许本地 HTTP 调试时关闭 Secure。
-- 验证：线上登录后检查 `Set-Cookie` 包含 `Secure; HttpOnly; SameSite=Strict`。
+  - [x] `sessions.Options` 增加 `Secure: cfg.CookieSecure`；新增配置项 `[web].cookie_secure`（默认 true，仅本地 HTTP 调试时改 false；缺失字段按默认 true 处理，参照 relay_starttls 的原始文件检查）。
+  - [x] 修正 SameSite 注释（3 = Strict）。
+  - [x] 测试：会话 cookie 断言 HttpOnly+Secure+SameSite=Strict。
+- 验证：
+  - [x] 测试断言 cookie 标志。
+  - [ ] 线上登录后检查 `Set-Cookie` 包含 `Secure; HttpOnly; SameSite=Strict`。
 
 ### 6. SMTP/IMAP/POP3 认证无速率限制
 
-- [ ] 位置：`internal/smtp_server/server.go`、`internal/imap_server/`、`internal/pop3_server/server.go`
+- [x] 位置：`internal/smtp_server/server.go`、`internal/imap_server/`、`internal/pop3_server/server.go`
 - 修复方案：
-  - [ ] 认证失败计数复用 `BanStore`（按 `RemoteAddr` 提取 IP 记录 fail/ban）。
-  - [ ] go-smtp 可通过 `AuthHandler` 包一层计数；IMAP/POP3 在各自登录入口计数。
-  - [ ] 达到 `ban.max_fail_attempts` 后直接拒绝连接（SMTP 返回 421，IMAP/POP3 断开）。
-- 验证：连续输错 N 次密码后，后续 AUTH 尝试被拒绝且管理后台封禁列表出现对应记录。
+  - [x] `store.RecordAuthFailure(ip, maxFail, minutes)`：认证失败计数复用 BanStore，达到 `ban.max_fail_attempts` 阈值即封禁 `ban.ban_duration_min` 分钟（与 Web 登录共用封禁记录）。
+  - [x] SMTP：`NewSession` 记录 `c.Conn().RemoteAddr()` 提取 IP；Auth 回调失败计数 + 封禁 IP 拒绝认证。
+  - [x] IMAP：`Login(connInfo,...)` 从 `connInfo.RemoteAddr` 取 IP；失败计数 + 封禁拒绝。
+  - [x] POP3：`handleConn` 开头检查封禁直接拒绝；`handlePASS` 失败计数。
+  - [x] 三个服务器构造函数注入 `config.BanConfig`。
+- 验证：
+  - [x] store 层单测：达到阈值封禁、空 IP 无副作用、与 Web 共用封禁记录（`auth_guard_test.go`）。
+  - [ ] 线上用错误密码连续尝试触发封禁后，SMTP/IMAP/POP3 认证被拒。
 
 ### 7. 附件存储路径遍历防护无效
 
-- [ ] 位置：`internal/storage/attachment.go:62-68`
-- 现状：`filepath.Clean("../../x")` 仍以 `..` 开头，`TrimPrefix` 只剥离一层 `../`；`../../../etc/passwd` 清洗后仍可逃逸。路径来自 DB，需配合 SQL 写权限才可利用，属纵深防御缺陷。
+- [x] 位置：`internal/storage/attachment.go`
 - 修复方案：
-  - [ ] 改为白名单校验：`cleanRel` 必须匹配 `^[a-f0-9-]{36}(\.[A-Za-z0-9.]+)?$`（uuid 命名格式），否则返回错误。
-  - [ ] 兜底再校验 `strings.HasPrefix(fullPath, s.baseDir + string(os.PathSeparator))`。
-- 验证：单测覆盖 `../`、`..\`（Windows）、绝对路径、符号链接名等用例，均应拒绝。
+  - [x] `FullPath` 改为白名单校验（UUID 文件名正则），非法路径返回错误；兜底校验最终路径仍在 baseDir 内。
+  - [x] `Save` 的扩展名白名单化（`safeExt`，丢弃 CR/LF、路径分隔符等）。
+- 验证：
+  - [x] 单测：`../`、绝对路径、Windows 分隔符、空路径、注入文件名全部拒绝；合法文件名正常读写删（`attachment_test.go`）。
 
 ### 8. 默认管理员 admin@example.com/admin
 
-- [ ] 位置：`main.go:308-358`（`ensureAdminUser`）
-- 现状：线上实测默认凭据**未生效**（管理员已修改），但新装机仍存在默认口令窗口。
+- [x] 位置：`main.go`（`ensureAdminUser`）
 - 修复方案：
-  - [ ] 首次启动生成 16 位随机密码，打印一次并要求首次登录强制修改（User 模型加 `MustChangePassword bool`）。
-  - [ ] 或支持环境变量 `MAILGO_ADMIN_PASSWORD` 由部署者显式指定。
-- 验证：全新数据库启动后，用 admin/admin 无法登录。
+  - [x] 初始密码改为：环境变量 `MAILGO_ADMIN_PASSWORD` 显式指定，否则生成 16 位随机密码打印一次。
+  - [x] User 模型新增 `MustChangePassword`：初始管理员、管理员重置密码的用户在登录后强制跳转设置页改密，改密后清除标记（`UpdatePassword` 顺带清除）。
+  - [x] AuthMiddleware 拦截（除 /settings、/logout），settings 页显示提示横幅。
+- 验证：
+  - [x] 全新数据库启动后 admin/admin 无法登录（密码为随机值）；登录后强制改密流程生效。
+  - [ ] 线上验证新装机流程。
 
 ### 9. Smarthost 中继 TLS 不验证证书（凭据可被 MITM 截获）
 
-- [ ] 位置：`internal/outbound/mailer.go:357-366`（`InsecureSkipVerify: true`）
+- [x] 位置：`internal/outbound/mailer.go`
 - 修复方案：
-  - [ ] 区分两条路径：直投 MX 保持机会式 TLS（不验证，业界常规）；relay 配置了用户名密码时默认验证证书（`ServerName` + 可选 `relay_tls_ca` pin 根证书），提供 `relay_tls_insecure` 开关逃生。
-- 验证：对自签证书 relay 测试：默认握手失败，开启开关后成功。
+  - [x] 直投 MX 保持机会式 TLS（`InsecureSkipVerify=true`，业界常规）；relay 路径默认验证证书（`InsecureSkipVerify=false`），IP literal 时以 IP 作为 ServerName 校验 IP SAN。
+  - [x] 新增配置 `outbound.relay_tls_insecure`（默认 false），供自签证书内网中继显式放行。
+- 验证：
+  - [x] 集成测试：自签证书 STARTTLS 中继默认握手失败（certificate 错误）、开启开关后完整 SMTP 流程成功（`mailer_test.go` 两个新测试）。
 
 ### 10. 缺安全响应头（点击劫持/降级风险）
 
-- [ ] 位置：Caddy 层或 `internal/web/server.go` 全局中间件
-- 修复方案（推荐 Caddy 统一加）：
-  - [ ] `Strict-Transport-Security: max-age=31536000; includeSubDomains`
-  - [ ] `X-Frame-Options: DENY`（或 CSP `frame-ancestors 'none'`）
-  - [ ] `X-Content-Type-Options: nosniff`
-  - [ ] `Referrer-Policy: strict-origin-when-cross-origin`
-  - [ ] 基础 CSP（注意 Gmail/管理页内联脚本较多，先从 `default-src 'self'` + 按需放宽起步）
-- 验证：`curl -sD - https://mail.lmve.net/login` 检查各头存在。
+- [x] 位置：`internal/web/middleware/security.go`（新中间件，全局注册）
+- 修复方案：
+  - [x] `Strict-Transport-Security: max-age=31536000; includeSubDomains`
+  - [x] `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'`（点击劫持）
+  - [x] `X-Content-Type-Options: nosniff`
+  - [x] `Referrer-Policy: strict-origin-when-cross-origin`
+  - [x] 基础 CSP：`default-src 'self'` + 放宽项（内联脚本/样式必须 unsafe-inline；`img-src https:` 允许邮件远程图片；`connect-src 'self'`/`form-action 'self'` 防数据外泄）。CSP 具体策略在 `security.go` 顶部注释说明。
+- 验证：
+  - [x] 单测：5 个头均存在，关键值抽查（`security_test.go`）。
+  - [ ] 线上回归：登录/收件箱/管理页功能不受 CSP 影响；邮件远程图片正常加载。
 
 ### 11. LDAP/OAuth 错误信息泄露与用户枚举
 
-- [ ] 位置：`internal/web/handlers/auth.go:170,182,269`
+- [x] 位置：`internal/web/handlers/auth.go`
 - 修复方案：
-  - [ ] 错误提示统一为“认证失败”，内部细节只写日志，原始 `err` 不回显页面。
-  - [ ] “用户 %s 在系统中不存在”改为与密码错误相同的提示。
-- 验证：LDAP/OAuth 登录失败时页面不含内部地址、DN、原始错误串。
+  - [x] 错误提示统一为通用文案（"LDAP 认证失败…"、"LDAP 账号未接入本系统…"、"OAuth2 认证失败…"），原始 err 只写日志，不回显页面；不再在提示中回显用户邮箱。
+- 验证：
+  - [x] 现有 OAuth2 测试仍通过（错误页文案不含内部细节）。
+  - [ ] 线上（启用 LDAP/OAuth 后）验证失败页面不含内部地址/DN/原始错误串。
 
 ## P3 低危 / 加固
 
@@ -163,6 +176,5 @@
 
 1. ~~#1（P0）~~ 已完成 2026-08-19
 2. ~~#2、#3、#4（P1）~~ 已完成 2026-08-19
-3. #5、#10（Cookie/安全头，部署层加固，改动小）
-4. #6、#7、#9（协议与存储层）
-5. 其余 P3 项随版本迭代
+3. ~~#5-#11（P2）~~ 已完成 2026-08-19
+4. 其余 P3 项随版本迭代

@@ -191,6 +191,7 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 	cookieStore.Options(sessions.Options{
 		HttpOnly: true,
 		SameSite: 3, // SameSiteStrictMode（比 Lax 更严格）
+		Secure:   cfg.CookieSecure,
 		MaxAge:   86400,
 		Path:     "/",
 	})
@@ -226,6 +227,8 @@ func (ws *WebServer) registerRoutes() {
 
 	// Apply BanMiddleware globally before public routes
 	ws.engine.Use(middleware.BanMiddleware(ws.stores))
+	// Security headers on every response
+	ws.engine.Use(middleware.SecurityHeaders())
 
 	// Public routes (no auth required)
 	ws.engine.GET("/login", authHandler.ShowLogin)

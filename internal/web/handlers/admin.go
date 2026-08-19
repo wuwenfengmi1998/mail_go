@@ -696,6 +696,8 @@ func (h *AdminHandler) UpdateUser(c *gin.Context) {
 			return
 		}
 		user.PasswordHash = string(hashedPassword)
+		// 管理员重置的密码必须由用户本人修改后才能正常使用
+		user.MustChangePassword = true
 	}
 
 	if err := h.stores.Users.Update(user); err != nil {

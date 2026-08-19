@@ -32,6 +32,10 @@ type WebConfig struct {
 	// 随机密钥并持久化到配置文件；也可通过环境变量 MAILGO_SECRET_KEY
 	// 覆盖（覆盖值不落盘，适合容器部署）。
 	SecretKey string `toml:"secret_key"`
+	// CookieSecure 控制会话 cookie 是否仅通过 HTTPS 传输（Secure 标志）。
+	// 默认 true；仅当应用直接以 HTTP 提供服务（本地调试、内网明文）时
+	// 才应改为 false。
+	CookieSecure bool `toml:"cookie_secure"`
 }
 
 // SecretKeyEnvVar 是覆盖会话签名密钥的环境变量名。
@@ -127,6 +131,10 @@ type OutboundConfig struct {
 	RelayUser     string `toml:"relay_user"`     // 中继认证用户名（AUTH PLAIN）
 	RelayPassword string `toml:"relay_password"` // 中继认证密码
 	RelayStartTLS bool   `toml:"relay_starttls"` // 非 465 端口是否使用 STARTTLS
+	// RelayTLSInsecure 是否跳过中继服务器的 TLS 证书验证。
+	// 默认 false（验证证书），避免凭据被中间人截获；仅当使用自签证书的
+	// 内网中继且明确知晓风险时才设为 true。
+	RelayTLSInsecure bool `toml:"relay_tls_insecure"`
 
 	// IP family and source address binding for outbound connections.
 	IPFamily string `toml:"ip_family"` // ipv4（默认，PTR/SPF 最可靠）| ipv6 | auto
@@ -189,7 +197,8 @@ func defaultConfig() *Config {
 			AttachDir: filepath.Join(bd, "attachments"),
 		},
 		Web: WebConfig{
-			Addr: DefaultWebPort,
+			Addr:         DefaultWebPort,
+			CookieSecure: true,
 		},
 		SMTP: SMTPConfig{
 			Addr:           fmt.Sprintf(":%d", DefaultSMTPPort),
@@ -435,10 +444,14 @@ func loadConfigFrom(path string) (*Config, error) {
 		return nil, fmt.Errorf("解析配置文件失败: %w", err)
 	}
 
-	// relay_starttls defaults to true for safety; the raw file is checked
-	// because TOML decoding cannot distinguish an absent bool from false.
+	// relay_starttls 与 web.cookie_secure 默认值为 true for safety;
+	// the raw file is checked because TOML decoding cannot distinguish
+	// an absent bool from false.
 	if !strings.Contains(string(data), "relay_starttls") {
 		cfg.Outbound.RelayStartTLS = defaults.Outbound.RelayStartTLS
+	}
+	if !strings.Contains(string(data), "cookie_secure") {
+		cfg.Web.CookieSecure = defaults.Web.CookieSecure
 	}
 
 	// 会话密钥缺失或不安全时补发随机密钥（随下面的写回一并落盘）

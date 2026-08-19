@@ -64,11 +64,12 @@ func NewManager(cfg config.OutboundConfig, hostname string, stores *store.Stores
 
 	if cfg.RelayHost != "" {
 		m.mailer.Relay = &RelayConfig{
-			Host:     cfg.RelayHost,
-			Port:     cfg.RelayPort,
-			Username: cfg.RelayUser,
-			Password: cfg.RelayPassword,
-			StartTLS: cfg.RelayStartTLS,
+			Host:        cfg.RelayHost,
+			Port:        cfg.RelayPort,
+			Username:    cfg.RelayUser,
+			Password:    cfg.RelayPassword,
+			StartTLS:    cfg.RelayStartTLS,
+			TLSInsecure: cfg.RelayTLSInsecure,
 		}
 		log.Printf("outbound: using smarthost relay %s:%d", cfg.RelayHost, cfg.RelayPort)
 	}

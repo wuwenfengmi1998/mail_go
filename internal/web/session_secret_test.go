@@ -70,7 +70,7 @@ func newTestWebServer(t *testing.T, secretKey string) (*WebServer, *store.Stores
 
 	baseDir := t.TempDir()
 	attStorage := storage.NewAttachmentStorage(filepath.Join(baseDir, "attachments"))
-	cfg := config.WebConfig{Addr: "127.0.0.1:0", SecretKey: secretKey}
+	cfg := config.WebConfig{Addr: "127.0.0.1:0", SecretKey: secretKey, CookieSecure: true}
 
 	ws, err := NewWebServer(cfg, stores, attStorage, config.StorageConfig{BaseDir: baseDir},
 		config.AuthConfig{}, config.BanConfig{MaxFailAttempts: 100}, config.CaddyConfig{}, nil)
@@ -104,6 +104,15 @@ func TestSessionSignedWithConfiguredSecretKey(t *testing.T) {
 	for _, c := range resp.Cookies() {
 		if c.Name == "mail_go_session" {
 			sessionCookie = c.Value
+			if !c.HttpOnly {
+				t.Error("session cookie must be HttpOnly")
+			}
+			if !c.Secure {
+				t.Error("session cookie must be Secure")
+			}
+			if c.SameSite != http.SameSiteStrictMode {
+				t.Errorf("session cookie SameSite = %v, want Strict", c.SameSite)
+			}
 		}
 	}
 	if sessionCookie == "" {

@@ -2,8 +2,16 @@ package outbound
 
 import (
 	"bufio"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/pem"
+	"math/big"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -339,4 +347,173 @@ func TestMailerSmarthostRelay(t *testing.T) {
 	if string(res.gotData) != string(input) {
 		t.Fatalf("relay data mismatch.\ngot:  %q\nwant: %q", res.gotData, input)
 	}
+}
+
+// startTLSSMTPServer 起一个支持 STARTTLS 的 SMTP 服务器（自签证书），
+// 供 relay TLS 验证测试使用：未升级 TLS 时广告 STARTTLS 能力，
+// 收到 STARTTLS 后升级为 TLS 并重新 EHLO。
+func startTLSSMTPServer(t *testing.T) (addr string, cleanup func()) {
+	t.Helper()
+	cert, err := tls.X509KeyPair(makeSelfSignedCertPEM(t))
+	if err != nil {
+		t.Fatalf("load self-signed cert: %v", err)
+	}
+	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				r := bufio.NewReader(conn)
+				w := bufio.NewWriter(conn)
+				_, _ = w.WriteString("220 relay.test ESMTP ready\r\n")
+				_ = w.Flush()
+				for {
+					line, err := r.ReadString('\n')
+					if err != nil {
+						return
+					}
+					up := strings.ToUpper(strings.TrimRight(line, "\r\n"))
+					switch {
+					case strings.HasPrefix(up, "STARTTLS"):
+						_, _ = w.WriteString("220 2.0.0 ready to start TLS\r\n")
+						_ = w.Flush()
+						tlsConn := tls.Server(conn, tlsCfg)
+						if err := tlsConn.Handshake(); err != nil {
+							return
+						}
+						conn = tlsConn
+						r = bufio.NewReader(conn)
+						w = bufio.NewWriter(conn)
+					case strings.HasPrefix(up, "EHLO"), strings.HasPrefix(up, "HELO"):
+						_, _ = w.WriteString("250-relay.test\r\n250-STARTTLS\r\n250 8BITMIME\r\n")
+						_ = w.Flush()
+					case strings.HasPrefix(up, "AUTH PLAIN"):
+						_, _ = w.WriteString("235 2.0.0 ok\r\n")
+						_ = w.Flush()
+					case strings.HasPrefix(up, "DATA"):
+						_, _ = w.WriteString("354 go ahead\r\n")
+						_ = w.Flush()
+						for {
+							dl, err := r.ReadString('\n')
+							if err != nil {
+								return
+							}
+							if strings.TrimRight(dl, "\r\n") == "." {
+								break
+							}
+						}
+						_, _ = w.WriteString("250 2.0.0 queued\r\n")
+						_ = w.Flush()
+					case strings.HasPrefix(up, "QUIT"):
+						_, _ = w.WriteString("221 bye\r\n")
+						_ = w.Flush()
+						return
+					default:
+						_, _ = w.WriteString("250 ok\r\n")
+						_ = w.Flush()
+					}
+				}
+			}()
+		}
+	}()
+
+	addr = ln.Addr().String()
+	return addr, func() { ln.Close() }
+}
+
+// makeSelfSignedCertPEM 生成一对自签证书（CN=relay.test）。
+func makeSelfSignedCertPEM(t *testing.T) (certPEM, keyPEM []byte) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "relay.test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		DNSNames:     []string{"relay.test"},
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	return certPEM, keyPEM
+}
+
+// TestMailerRelayRejectsUntrustedCert 中继使用自签证书时默认必须拒绝
+// （证书验证开启，防止凭据被中间人截获）。
+func TestMailerRelayRejectsUntrustedCert(t *testing.T) {
+	addr, cleanup := startTLSSMTPServer(t)
+	defer cleanup()
+
+	m := NewMailer("mail.lmve.net", 5*time.Second)
+	m.Relay = &RelayConfig{
+		Host:        "127.0.0.1",
+		Port:        mustPort(t, addr),
+		Username:    "relay-user",
+		Password:    "relay-pass",
+		TLSInsecure: false,
+	}
+
+	input := []byte("From: a@lmve.net\r\nTo: b@bogus-domain.invalid\r\nSubject: relay\r\n\r\nbody\r\n")
+	_, err := m.Deliver("a@lmve.net", "b@bogus-domain.invalid", input)
+	if err == nil {
+		t.Fatal("relay with untrusted self-signed cert should be rejected")
+	}
+	if !strings.Contains(err.Error(), "certificate") {
+		t.Fatalf("expected certificate verification error, got: %v", err)
+	}
+}
+
+// TestMailerRelayInsecureSkipsVerification 显式开启 relay_tls_insecure
+// 后，自签证书的中继可以完成 TLS 握手并进入 SMTP 会话。
+func TestMailerRelayInsecureSkipsVerification(t *testing.T) {
+	addr, cleanup := startTLSSMTPServer(t)
+	defer cleanup()
+
+	m := NewMailer("mail.lmve.net", 5*time.Second)
+	m.Relay = &RelayConfig{
+		Host:        "127.0.0.1",
+		Port:        mustPort(t, addr),
+		Username:    "relay-user",
+		Password:    "relay-pass",
+		TLSInsecure: true,
+	}
+
+	input := []byte("From: a@lmve.net\r\nTo: b@bogus-domain.invalid\r\nSubject: relay\r\n\r\nbody\r\n")
+	resp, err := m.Deliver("a@lmve.net", "b@bogus-domain.invalid", input)
+	if err != nil {
+		t.Fatalf("relay with TLSInsecure should proceed: %v", err)
+	}
+	if !strings.HasPrefix(resp, "250") {
+		t.Fatalf("unexpected response: %q", resp)
+	}
+}
+
+func mustPort(t *testing.T, addr string) int {
+	t.Helper()
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("split %q: %v", addr, err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("port %q: %v", portStr, err)
+	}
+	return port
 }

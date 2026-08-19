@@ -85,6 +85,8 @@ addr = ":8080"                             # 监听地址，支持 TCP 端口或
 secret_key = ""                             # Web 会话签名密钥；留空时首次启动自动生成
                                            # 随机密钥并写入本文件（请妥善备份，泄露/丢失
                                            # 分别意味着会话可被伪造/所有登录态失效）
+cookie_secure = true                        # 会话 cookie 仅通过 HTTPS 传输（Secure 标志）；
+                                           # 仅本地 HTTP 调试时才改为 false
 
 [smtp]
 addr = ":25"                               # SMTP 明文端口
@@ -143,6 +145,9 @@ relay_port = 587                         # 465 = 隐式 TLS，其他端口按需
 relay_user = ""                          # 中继认证用户名（AUTH PLAIN）
 relay_password = ""                      # 中继认证密码
 relay_starttls = true                    # 非 465 端口是否使用 STARTTLS
+relay_tls_insecure = false                # 是否跳过中继服务器 TLS 证书验证；
+                                          # 默认验证证书（保护中继凭据），仅自签证书
+                                          # 内网中继且明确知晓风险时才改为 true
 ip_family = "ipv4"                       # 出站地址族：ipv4（默认）| ipv6 | auto
 source_ip = ""                           # 出站源地址绑定（如静态 IPv6 地址），留空由内核选择
 ```

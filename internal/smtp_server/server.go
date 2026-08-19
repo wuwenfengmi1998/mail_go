@@ -36,13 +36,14 @@ type SMTPServer struct {
 	storage   *storage.AttachmentStorage
 	outbound  *outbound.Manager
 	cfg       config.SMTPConfig
+	banCfg    config.BanConfig
 	tlsLoader *tlsutil.Loader
 }
 
 // NewSMTPServer creates a new SMTP server instance. tlsLoader may be nil
 // when TLS is not configured.
-func NewSMTPServer(cfg config.SMTPConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, ob *outbound.Manager, tlsLoader *tlsutil.Loader) *SMTPServer {
-	return &SMTPServer{stores: stores, storage: attStorage, outbound: ob, cfg: cfg, tlsLoader: tlsLoader}
+func NewSMTPServer(cfg config.SMTPConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, ob *outbound.Manager, tlsLoader *tlsutil.Loader, banCfg config.BanConfig) *SMTPServer {
+	return &SMTPServer{stores: stores, storage: attStorage, outbound: ob, cfg: cfg, banCfg: banCfg, tlsLoader: tlsLoader}
 }
 
 func (s *SMTPServer) tlsConfig() (*tls.Config, error) {
@@ -108,9 +109,10 @@ type smtpBackend struct {
 // NewSession creates a new SMTP session for the incoming connection.
 func (be *smtpBackend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 	return &smtpSession{
-		backend: be,
-		mode:    be.mode,
-		rcpts:   make([]string, 0),
+		backend:   be,
+		mode:      be.mode,
+		rcpts:     make([]string, 0),
+		clientIP:  store.ClientIPFromAddr(c.Conn().RemoteAddr()),
 	}, nil
 }
 
@@ -126,6 +128,7 @@ type smtpSession struct {
 	userID        uint
 	email         string
 	user          *db.User
+	clientIP      string
 }
 
 // AuthMechanisms returns supported SMTP AUTH mechanisms.
@@ -139,8 +142,19 @@ func (s *smtpSession) Auth(mech string) (sasl.Server, error) {
 		return nil, smtp.ErrAuthUnknownMechanism
 	}
 	return sasl.NewPlainServer(func(identity, username, password string) error {
+		// 已封禁 IP 一律拒绝认证（防协议层暴力破解）
+		if banned, _ := s.backend.server.stores.Bans.IsBanned(s.clientIP); banned {
+			return smtp.ErrAuthFailed
+		}
+
 		user, err := s.backend.server.stores.Users.Authenticate(username, password)
 		if err != nil {
+			// 认证失败计数，达到阈值封禁（与 Web 登录共用 ban_entries）
+			s.backend.server.stores.RecordAuthFailure(
+				s.clientIP,
+				s.backend.server.banCfg.MaxFailAttempts,
+				s.backend.server.banCfg.BanDurationMin,
+			)
 			return smtp.ErrAuthFailed
 		}
 

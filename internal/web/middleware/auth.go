@@ -48,6 +48,13 @@ func AuthMiddleware(stores *store.Stores) gin.HandlerFunc {
 			return
 		}
 
+		// 首次登录/密码被重置的用户必须先修改密码才能使用其他功能
+		if user.MustChangePassword && c.Request.URL.Path != "/settings" && c.Request.URL.Path != "/logout" {
+			c.Redirect(302, "/settings?force=1")
+			c.Abort()
+			return
+		}
+
 		c.Set("currentUser", user)
 		c.Set("userID", id)
 		c.Next()

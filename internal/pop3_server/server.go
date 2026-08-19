@@ -22,14 +22,15 @@ type POP3Server struct {
 	listener  net.Listener
 	stores    *store.Stores
 	cfg       config.POP3Config
+	banCfg    config.BanConfig
 	tlsLoader *tlsutil.Loader
 	wg        sync.WaitGroup
 }
 
 // NewPOP3Server creates a new POP3 server instance. tlsLoader may be nil
 // when TLS is not configured.
-func NewPOP3Server(cfg config.POP3Config, stores *store.Stores, tlsLoader *tlsutil.Loader) *POP3Server {
-	return &POP3Server{stores: stores, cfg: cfg, tlsLoader: tlsLoader}
+func NewPOP3Server(cfg config.POP3Config, stores *store.Stores, tlsLoader *tlsutil.Loader, banCfg config.BanConfig) *POP3Server {
+	return &POP3Server{stores: stores, cfg: cfg, banCfg: banCfg, tlsLoader: tlsLoader}
 }
 
 func (s *POP3Server) tlsConfig() (*tls.Config, error) {
@@ -106,6 +107,14 @@ func (s *POP3Server) StartTLS() error {
 func (s *POP3Server) handleConn(conn net.Conn) {
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(10 * time.Minute))
+
+	clientIP := store.ClientIPFromAddr(conn.RemoteAddr())
+
+	// 已封禁 IP 直接拒绝（防协议层暴力破解）
+	if banned, _ := s.stores.Bans.IsBanned(clientIP); banned {
+		sendResponse(conn, "-ERR access denied")
+		return
+	}
 
 	reader := bufio.NewReader(conn)
 	var user *db.User
@@ -272,8 +281,12 @@ func (s *POP3Server) handlePASS(conn net.Conn, password string, user *db.User) (
 		return nil, nil, nil
 	}
 
+	clientIP := store.ClientIPFromAddr(conn.RemoteAddr())
+
 	authUser, err := s.stores.Users.Authenticate(user.Username, password)
 	if err != nil {
+		// 认证失败计数，达到阈值封禁（与 Web 登录共用 ban_entries）
+		s.stores.RecordAuthFailure(clientIP, s.banCfg.MaxFailAttempts, s.banCfg.BanDurationMin)
 		sendResponse(conn, "-ERR authentication failed")
 		return nil, nil, nil
 	}

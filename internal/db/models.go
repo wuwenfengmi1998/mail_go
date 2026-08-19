@@ -15,8 +15,11 @@ type User struct {
 	UsedBytes    int64     `gorm:"default:0" json:"used_bytes"`
 	IsActive     bool      `gorm:"default:true" json:"is_active"`
 	IsAdmin      bool      `gorm:"default:false" json:"is_admin"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	// MustChangePassword 为 true 时该用户（通常是初始管理员或被重置密码的
+	// 用户）在首次登录后必须修改密码。
+	MustChangePassword bool      `gorm:"default:false" json:"-"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // TableName specifies the table name for User.

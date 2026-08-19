@@ -723,6 +723,7 @@ func (h *MailHandler) Settings(c *gin.Context) {
 		"activeFolder": "settings",
 		"error":        "",
 		"success":      "",
+		"mustChange":   c.Query("force") == "1",
 		"inboxUnread":  inboxUnread,
 		"draftsTotal":  draftsTotal,
 		"sentTotal":    sentTotal,

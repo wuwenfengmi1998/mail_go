@@ -170,7 +170,7 @@ func (h *AuthHandler) LDAPLogin(c *gin.Context) {
 
 		remaining := h.banCfg.MaxFailAttempts - failCount
 		c.HTML(200, "login", gin.H{
-			"error":          fmt.Sprintf("LDAP 认证失败，还剩 %d 次尝试机会: %v", remaining, err),
+			"error":          fmt.Sprintf("LDAP 认证失败，还剩 %d 次尝试机会", remaining),
 			"oauth2Enabled":  h.authCfg.OAuth2Enabled,
 			"ldapEnabled":    h.authCfg.LDAPEnabled,
 			"oauth2Provider": h.authCfg.OAuth2Provider,
@@ -182,7 +182,7 @@ func (h *AuthHandler) LDAPLogin(c *gin.Context) {
 	user, err := h.stores.Users.GetByEmail(email)
 	if err != nil {
 		c.HTML(200, "login", gin.H{
-			"error":          fmt.Sprintf("LDAP 用户 %s 在系统中不存在", email),
+			"error":          "LDAP 账号未接入本系统，请联系管理员",
 			"oauth2Enabled":  h.authCfg.OAuth2Enabled,
 			"ldapEnabled":    h.authCfg.LDAPEnabled,
 			"oauth2Provider": h.authCfg.OAuth2Provider,
@@ -308,7 +308,7 @@ func (h *AuthHandler) OAuth2Callback(c *gin.Context) {
 	if err != nil {
 		log.Printf("OAuth2 回调失败: %v", err)
 		c.HTML(200, "login", gin.H{
-			"error":          fmt.Sprintf("OAuth2 认证失败: %v", err),
+			"error":          "OAuth2 认证失败，请重试或联系管理员",
 			"oauth2Enabled":  h.authCfg.OAuth2Enabled,
 			"ldapEnabled":    h.authCfg.LDAPEnabled,
 			"oauth2Provider": h.authCfg.OAuth2Provider,
@@ -320,7 +320,7 @@ func (h *AuthHandler) OAuth2Callback(c *gin.Context) {
 	user, err := h.stores.Users.GetByEmail(email)
 	if err != nil {
 		c.HTML(200, "login", gin.H{
-			"error":          fmt.Sprintf("OAuth2 用户 %s 在系统中不存在", email),
+			"error":          "OAuth2 账号未接入本系统，请联系管理员",
 			"oauth2Enabled":  h.authCfg.OAuth2Enabled,
 			"ldapEnabled":    h.authCfg.LDAPEnabled,
 			"oauth2Provider": h.authCfg.OAuth2Provider,

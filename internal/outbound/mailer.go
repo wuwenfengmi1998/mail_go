@@ -49,11 +49,12 @@ func newPermError(format string, args ...interface{}) *DeliveryError {
 
 // RelayConfig describes a smarthost through which all external mail is sent.
 type RelayConfig struct {
-	Host     string
-	Port     int    // 465 = implicit TLS; other ports may use STARTTLS
-	Username string // AUTH PLAIN credentials (empty = no authentication)
-	Password string
-	StartTLS bool // use STARTTLS on non-465 ports
+	Host        string
+	Port        int    // 465 = implicit TLS; other ports may use STARTTLS
+	Username    string // AUTH PLAIN credentials (empty = no authentication)
+	Password    string
+	StartTLS    bool // use STARTTLS on non-465 ports
+	TLSInsecure bool // skip certificate verification (test-only, credentials leak risk)
 }
 
 // Mailer performs direct MX delivery (or smarthost relay) of a single message.
@@ -131,6 +132,8 @@ func (m *Mailer) Deliver(from, to string, data []byte) (string, error) {
 }
 
 // deliverViaRelay sends the message through the configured smarthost.
+// The relay carries AUTH credentials, so its TLS certificate is verified
+// unless RelayTLSInsecure is explicitly enabled.
 func (m *Mailer) deliverViaRelay(from, to string, data []byte) (string, error) {
 	port := m.Relay.Port
 	if port == 0 {
@@ -139,7 +142,8 @@ func (m *Mailer) deliverViaRelay(from, to string, data []byte) (string, error) {
 	implicitTLS := port == 465
 	return m.smtpTransaction(m.Relay.Host, port, implicitTLS,
 		m.Relay.StartTLS && !implicitTLS,
-		m.Relay.Username, m.Relay.Password, from, to, data)
+		m.Relay.Username, m.Relay.Password, from, to, data,
+		m.Relay.TLSInsecure)
 }
 
 // smtpClient wraps a textproto connection to a remote SMTP server.
@@ -240,13 +244,17 @@ func (c *smtpClient) authPlain(username, password string) error {
 }
 
 // deliverToHost performs a full SMTP transaction with a single MX host.
+// Direct MX delivery is opportunistic TLS: certificates are not verified
+// because most MX certificates cannot be validated over a cold connection.
 func (m *Mailer) deliverToHost(host, from, to string, data []byte) (string, error) {
-	return m.smtpTransaction(host, m.port(), false, false, "", "", from, to, data)
+	return m.smtpTransaction(host, m.port(), false, false, "", "", from, to, data, true)
 }
 
 // smtpTransaction performs one complete SMTP session: connect, greeting,
 // optional implicit TLS / STARTTLS, optional AUTH PLAIN, MAIL/RCPT/DATA/QUIT.
-func (m *Mailer) smtpTransaction(host string, port int, implicitTLS, startTLS bool, username, password, from, to string, data []byte) (string, error) {
+// tlsInsecure 控制 TLS 握手时是否跳过证书验证：直投 MX 用 true（机会式
+// TLS），relay 用配置值（默认 false，保护中继凭据）。
+func (m *Mailer) smtpTransaction(host string, port int, implicitTLS, startTLS bool, username, password, from, to string, data []byte, tlsInsecure bool) (string, error) {
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 
 	ctx, cancel := context.WithTimeout(context.Background(), m.ConnectTimeout)
@@ -267,11 +275,12 @@ func (m *Mailer) smtpTransaction(host string, port int, implicitTLS, startTLS bo
 
 	tlsServerName := host
 	if ip := net.ParseIP(host); ip != nil {
-		tlsServerName = "" // no SNI for IP literals
+		// IP literal 同样作为 ServerName：证书验证模式下校验其 IP SAN
+		tlsServerName = ip.String()
 	}
 
 	if implicitTLS {
-		tlsConn, err := tlsClientHandshake(ctx, conn, tlsServerName, host)
+		tlsConn, err := tlsClientHandshake(ctx, conn, tlsServerName, host, tlsInsecure)
 		if err != nil {
 			return "", err
 		}
@@ -294,7 +303,7 @@ func (m *Mailer) smtpTransaction(host string, port int, implicitTLS, startTLS bo
 			if _, _, err := c.cmd(220, "STARTTLS"); err != nil {
 				return "", err
 			}
-			tlsConn, err := tlsClientHandshake(ctx, conn, tlsServerName, host)
+			tlsConn, err := tlsClientHandshake(ctx, conn, tlsServerName, host, tlsInsecure)
 			if err != nil {
 				return "", err
 			}
@@ -354,10 +363,13 @@ func (m *Mailer) smtpTransaction(host string, port int, implicitTLS, startTLS bo
 }
 
 // tlsClientHandshake upgrades a plain connection to TLS.
-func tlsClientHandshake(ctx context.Context, conn net.Conn, serverName, host string) (net.Conn, error) {
+// Direct MX delivery passes insecure=true (opportunistic TLS: remote MX
+// certificates often cannot be verified). Relays with AUTH credentials must
+// pass insecure=false so the connection cannot be MITM'd.
+func tlsClientHandshake(ctx context.Context, conn net.Conn, serverName, host string, insecure bool) (net.Conn, error) {
 	tlsConn := tls.Client(conn, &tls.Config{
 		ServerName:         serverName,
-		InsecureSkipVerify: true, // remote MX certificates often cannot be verified
+		InsecureSkipVerify: insecure,
 	})
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
 		return nil, newTempError("TLS handshake with %s failed: %v", host, err)

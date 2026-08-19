@@ -124,9 +124,14 @@ func (s *userStoreGorm) UpdateUsedBytes(id uint, delta int64) error {
 		Update("used_bytes", gorm.Expr("used_bytes + ?", delta)).Error
 }
 
-// UpdatePassword updates the password hash for a user.
+// UpdatePassword updates the password hash for a user and clears the
+// must-change-password flag (the user has now set their own password).
 func (s *userStoreGorm) UpdatePassword(userID uint, hashedPassword string) error {
-	return s.db.Model(&db.User{}).Where("id = ?", userID).Update("password_hash", hashedPassword).Error
+	return s.db.Model(&db.User{}).Where("id = ?", userID).
+		Updates(map[string]interface{}{
+			"password_hash":         hashedPassword,
+			"must_change_password": false,
+		}).Error
 }
 
 // ListAll retrieves a paginated list of all users across all domains.

@@ -238,7 +238,7 @@ func main() {
 	}
 
 	// 7. Start SMTP server
-	smtpSrv := smtp_server.NewSMTPServer(cfg.SMTP, stores, attStorage, outboundMgr, smtpTLS)
+	smtpSrv := smtp_server.NewSMTPServer(cfg.SMTP, stores, attStorage, outboundMgr, smtpTLS, cfg.Ban)
 	go func() {
 		if err := smtpSrv.Start(); err != nil {
 			log.Printf("SMTP 服务启动失败: %v", err)
@@ -259,7 +259,7 @@ func main() {
 	}
 
 	// 7. Start IMAP server
-	imapSrv := imap_server.NewIMAPServer(cfg.IMAP, stores, imapTLS)
+	imapSrv := imap_server.NewIMAPServer(cfg.IMAP, stores, imapTLS, cfg.Ban)
 	go func() {
 		if err := imapSrv.Start(); err != nil {
 			log.Printf("IMAP 服务启动失败: %v", err)
@@ -275,7 +275,7 @@ func main() {
 	}
 
 	// 8. Start POP3 server
-	pop3Srv := pop3_server.NewPOP3Server(cfg.POP3, stores, pop3TLS)
+	pop3Srv := pop3_server.NewPOP3Server(cfg.POP3, stores, pop3TLS, cfg.Ban)
 	go func() {
 		if err := pop3Srv.Start(); err != nil {
 			log.Printf("POP3 服务启动失败: %v", err)
@@ -334,8 +334,18 @@ func ensureAdminUser(stores *store.Stores, cfg *config.Config) {
 		fmt.Println("默认域名 example.com 创建成功")
 	}
 
-	// Hash the default admin password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.DefaultCost)
+	// 初始密码：优先取环境变量 MAILGO_ADMIN_PASSWORD；
+	// 否则生成随机密码并打印一次（只能在本机启动日志中看到）。
+	// 无论哪种方式都会标记首次登录必须改密，杜绝默认口令。
+	adminPassword := os.Getenv("MAILGO_ADMIN_PASSWORD")
+	generated := false
+	if adminPassword == "" {
+		adminPassword = randomPassword()
+		generated = true
+	}
+
+	// Hash the admin password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
 	if err != nil {
 		log.Printf("密码哈希失败: %v", err)
 		return
@@ -343,13 +353,14 @@ func ensureAdminUser(stores *store.Stores, cfg *config.Config) {
 
 	// Create the admin user
 	adminUser := &db.User{
-		Username:     "admin",
-		PasswordHash: string(hashedPassword),
-		DomainID:     domain.ID,
-		QuotaBytes:   5 * 1024 * 1024 * 1024, // 5GB
-		UsedBytes:    0,
-		IsActive:     true,
-		IsAdmin:      true,
+		Username:             "admin",
+		PasswordHash:         string(hashedPassword),
+		DomainID:             domain.ID,
+		QuotaBytes:           5 * 1024 * 1024 * 1024, // 5GB
+		UsedBytes:            0,
+		IsActive:             true,
+		IsAdmin:              true,
+		MustChangePassword:   true,
 	}
 
 	if createErr := stores.Users.Create(adminUser); createErr != nil {
@@ -357,5 +368,29 @@ func ensureAdminUser(stores *store.Stores, cfg *config.Config) {
 		return
 	}
 
-	fmt.Println("管理员账户 admin@example.com 创建成功（密码: admin）")
+	if generated {
+		fmt.Printf("管理员账户 admin@example.com 创建成功，初始密码: %s\n", adminPassword)
+	} else {
+		fmt.Println("管理员账户 admin@example.com 创建成功（密码来自 MAILGO_ADMIN_PASSWORD）")
+	}
+	fmt.Println("安全提示：该账户已被标记为“首次登录必须修改密码”，请登录后立即在 设置 页面修改。")
+}
+
+// randomPassword 生成 16 位随机密码（数字+大小写字母），用于初始管理员账户。
+func randomPassword() string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		// crypto/rand 失败极罕见；退化为时间种子以避免空密码
+		log.Printf("生成随机密码失败: %v，使用弱随机回退", err)
+		n := time.Now().UnixNano()
+		for i := range buf {
+			buf[i] = charset[(n>>(uint(i)*4))%int64(len(charset))]
+		}
+		return string(buf)
+	}
+	for i := range buf {
+		buf[i] = charset[int(buf[i])%len(charset)]
+	}
+	return string(buf)
 }
