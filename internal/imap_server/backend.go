@@ -354,7 +354,6 @@ func (m *imapMailbox) Status(items []imap.StatusItem) (*imap.MailboxStatus, erro
 	if err != nil {
 		return nil, err
 	}
-
 	status.Messages = uint32(len(messages))
 
 	var unseenCount uint32
@@ -370,7 +369,16 @@ func (m *imapMailbox) Status(items []imap.StatusItem) (*imap.MailboxStatus, erro
 		return nil, err
 	}
 	status.UidNext = uint32(maxID + 1)
-	status.UidValidity = 1
+	// UIDVALIDITY 持久化随机值（RFC 3501）：数据库重建导致消息 ID 空间
+	// 变化时该值随之改变，客户端才会丢弃旧缓存全量重同步。此前硬编码 1，
+	// 数据库重建后 Thunderbird 等客户端缓存永不失效（只下载"新增"的
+	// UID），表现为列表只剩少量邮件。
+	uidValidity, err := m.stores.MailboxState.UidValidity(m.user.id, m.name)
+	if err != nil {
+		log.Printf("IMAP: 获取 UIDVALIDITY 失败 folder=%s: %v", m.name, err)
+		uidValidity = 1
+	}
+	status.UidValidity = uidValidity
 
 	return status, nil
 }
@@ -394,7 +402,6 @@ func (m *imapMailbox) ListMessages(uid bool, seqset *imap.SeqSet, items []imap.F
 	if err != nil {
 		return err
 	}
-
 	if len(dbMessages) == 0 {
 		return nil
 	}
@@ -567,7 +574,6 @@ func (m *imapMailbox) SearchMessages(uid bool, criteria *imap.SearchCriteria) ([
 			}
 		}
 	}
-
 	return results, nil
 }
 

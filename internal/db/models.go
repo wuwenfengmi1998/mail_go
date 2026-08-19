@@ -170,3 +170,21 @@ type Attachment struct {
 func (Attachment) TableName() string {
 	return "attachments"
 }
+
+// MailboxState 记录每个邮箱（用户+文件夹）的持久化 IMAP 状态。
+// UidValidity 在首次访问时随机生成并持久化：数据库重建（消息 ID 空间
+// 变化）后该值随之改变，客户端（Thunderbird 等）会据此丢弃本地缓存
+// 并全量重新同步。此前硬编码为 1，数据库重建后客户端缓存永不失效，
+// 导致只显示/下载少量"缺失"邮件。
+type MailboxState struct {
+	UserID      uint   `gorm:"primaryKey" json:"user_id"`
+	Folder      string `gorm:"primaryKey;size:64" json:"folder"`
+	UidValidity uint32 `gorm:"not null" json:"uid_validity"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+// TableName specifies the table name for MailboxState.
+func (MailboxState) TableName() string {
+	return "mailbox_states"
+}
