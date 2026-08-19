@@ -247,3 +247,53 @@ func TestPushExpunged(t *testing.T) {
 		t.Fatalf("seqs = %v, want [2 5]", seqs)
 	}
 }
+
+// TestBroadcastUpdateIsolatedPerListener 回归测试：同一更新广播到多个监听器
+// 时，每个监听器必须持有独立的 Update 对象（独立 Done channel），否则
+// 多个 listenUpdates 会对同一 channel 二次 close 导致
+// panic: close of closed channel。
+func TestBroadcastUpdateIsolatedPerListener(t *testing.T) {
+	gdb, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "test.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := gdb.AutoMigrate(&db.Message{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	stores := store.NewStores(gdb)
+
+	hub := connhub.New()
+	srv := NewIMAPServer(config.IMAPConfig{}, stores, nil, config.BanConfig{}, hub)
+	srv.newServer("127.0.0.1:143", nil)
+	srv.newServer("127.0.0.1:993", nil)
+
+	srv.PushExpunged("alice@example.com", "INBOX", []uint32{1})
+
+	srv.beMu.Lock()
+	bes := append([]*imapBackend(nil), srv.bes...)
+	srv.beMu.Unlock()
+
+	// 每个监听器各收到一条更新
+	var updates []backend.Update
+	for i, b := range bes {
+		select {
+		case upd := <-b.updates:
+			updates = append(updates, upd)
+		case <-time.After(time.Second):
+			t.Fatalf("backend %d: no update received", i)
+		}
+	}
+	if len(updates) != 2 {
+		t.Fatalf("updates = %d, want 2", len(updates))
+	}
+
+	// 关键断言：两条更新必须拥有独立的 Done channel
+	if updates[0].Done() == updates[1].Done() {
+		t.Fatal("listeners share the same Done channel: double close would panic")
+	}
+
+	// 模拟两个 listenUpdates 各自执行 close(update.Done())：修复前必 panic
+	for _, upd := range updates {
+		close(upd.Done())
+	}
+}

@@ -95,6 +95,9 @@ func (s *IMAPServer) PushExpunged(userEmail, mailbox string, seqNums []uint32) {
 }
 
 // broadcastUpdate 把一条更新非阻塞地投递到所有监听器的推送通道。
+// 每个监听器必须收到独立的 Update 对象（各自独立的 Done channel）：
+// 每个监听器的 listenUpdates 都会对 update.Done() 执行 close，共享
+// 同一对象会导致对同一 channel 二次 close 而 panic。
 func (s *IMAPServer) broadcastUpdate(update backend.Update, userEmail string, msgID uint) {
 	s.beMu.Lock()
 	bes := append([]*imapBackend(nil), s.bes...)
@@ -102,10 +105,30 @@ func (s *IMAPServer) broadcastUpdate(update backend.Update, userEmail string, ms
 
 	for _, b := range bes {
 		select {
-		case b.updates <- update:
+		case b.updates <- cloneUpdate(update):
 		default:
 			log.Printf("IMAP: 推送通道已满，丢弃 %s 的更新 (msg=%d)", userEmail, msgID)
 		}
+	}
+}
+
+// cloneUpdate 按类型复制一条 backend.Update：载荷（消息/序号）共享，
+// 但 Username/Mailbox/Done channel 重置为独立实例。
+func cloneUpdate(u backend.Update) backend.Update {
+	switch u := u.(type) {
+	case *backend.MessageUpdate:
+		return &backend.MessageUpdate{
+			Update:  backend.NewUpdate(u.Username(), u.Mailbox()),
+			Message: u.Message,
+		}
+	case *backend.ExpungeUpdate:
+		return &backend.ExpungeUpdate{
+			Update: backend.NewUpdate(u.Username(), u.Mailbox()),
+			SeqNum: u.SeqNum,
+		}
+	default:
+		// 防御：未知类型原样传递（当前不存在此类更新）
+		return u
 	}
 }
 
