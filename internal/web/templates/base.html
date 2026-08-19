@@ -165,7 +165,7 @@
         font-size: 12.5px; color: var(--text-3);
     }
     .cell-date {
-        width: 78px; flex-shrink: 0; text-align: right;
+        flex: 0 0 auto; white-space: nowrap; text-align: right;
         font-size: 12.5px; color: var(--text-3);
     }
     .mail-row.unread .cell-date { color: var(--text-2); }
@@ -388,11 +388,11 @@
         .page-info { font-size: 12px; }
         .mail-row { padding: 0 10px; height: 60px; gap: 8px; }
         .avatar { width: 32px; height: 32px; font-size: 13px; }
-        .cell-from { width: 88px; font-size: 13px; }
+        .cell-from { width: 76px; font-size: 13px; }
         .cell-subject-wrap { flex: 1; min-width: 0; }
         .cell-subject { font-size: 13px; }
         .cell-snippet { display: none; }
-        .cell-date { width: 56px; font-size: 11.5px; }
+        .cell-date { width: auto; font-size: 10.5px; }
         .row-del { opacity: 1; }
         .list-footer { padding: 8px 10px; }
         .pager { margin-left: auto; gap: 4px; }

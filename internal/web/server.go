@@ -108,8 +108,15 @@ func templateFuncs() template.FuncMap {
 		"initial": initial,
 		// truncate 折叠空白并截断到 n 个字符（用于列表摘要）。
 		"truncate": truncate,
-		// shortDate 按 QQ 邮箱习惯格式化：今天显示 HH:mm，今年显示 MM-DD，更早显示 YYYY-MM-DD。
+		// shortDate 邮件列表时间：统一 12 小时制（上午/下午）。
+		// 今天显示「下午 2:35」，今年显示「08-20 下午 2:35」，
+		// 更早显示「2026-08-20 下午 2:35」。
 		"shortDate": shortDate,
+		// time12 完整时间（含秒），先转换为 Web 时区：
+		// 「2026-08-20 下午 2:35:05」。
+		"time12": time12,
+		// time12m 同上但不含秒。
+		"time12m": time12m,
 		// localTime 把存储的 UTC 时间转换为 Web 配置时区（默认 Asia/Shanghai）。
 		"localTime": localTime,
 		// avatarStyle 根据字符串哈希生成头像背景/前景色。
@@ -179,19 +186,49 @@ func truncate(s string, n int) string {
 	return string(r[:n]) + "…"
 }
 
-// shortDate formats a time like QQ Mail does: today -> HH:mm,
-// this year -> MM-DD, otherwise -> YYYY-MM-DD.
-// 时间先按 Web 配置时区转换（库内为 UTC），"今天"判断也使用该时区。
+// periodOf 返回 12 小时制的时间段与小时：上午/下午 + 1-12。
+func periodOf(t time.Time) (string, int) {
+	period := "上午"
+	if t.Hour() >= 12 {
+		period = "下午"
+	}
+	h := t.Hour() % 12
+	if h == 0 {
+		h = 12
+	}
+	return period, h
+}
+
+// shortDate 邮件列表时间（12 小时制，先按 Web 配置时区转换）：
+// 今天 → 「下午 2:35」；今年 → 「08-20 下午 2:35」；
+// 更早 → 「2026-08-20 下午 2:35」。
 func shortDate(t time.Time) string {
 	t = inWebTZ(t)
 	now := time.Now().In(t.Location())
+	period, h := periodOf(t)
+	clock := fmt.Sprintf("%s %d:%02d", period, h, t.Minute())
 	if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
-		return t.Format("15:04")
+		return clock
 	}
 	if t.Year() == now.Year() {
-		return t.Format("01-02")
+		return fmt.Sprintf("%s %s", t.Format("01-02"), clock)
 	}
-	return t.Format("2006-01-02")
+	return fmt.Sprintf("%s %s", t.Format("2006-01-02"), clock)
+}
+
+// time12 完整时间（12 小时制，先按 Web 配置时区转换）：
+// 「2026-08-20 下午 2:35:05」。
+func time12(t time.Time) string {
+	t = inWebTZ(t)
+	period, h := periodOf(t)
+	return fmt.Sprintf("%s %s %d:%02d:%02d", t.Format("2006-01-02"), period, h, t.Minute(), t.Second())
+}
+
+// time12m 完整时间（12 小时制，不含秒）。
+func time12m(t time.Time) string {
+	t = inWebTZ(t)
+	period, h := periodOf(t)
+	return fmt.Sprintf("%s %s %d:%02d", t.Format("2006-01-02"), period, h, t.Minute())
 }
 
 // webTZ 是 Web 界面显示时间使用的时区（默认 Asia/Shanghai）。
@@ -323,7 +360,7 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 func (ws *WebServer) registerRoutes() {
 	authHandler := handlers.NewAuthHandler(ws.stores, ws.authCfg, ws.banCfg)
 	mailHandler := handlers.NewMailHandler(ws.stores, ws.storage, ws.outbound, imap_server.NewMailboxService(ws.stores), ws.pusher)
-	adminHandler := handlers.NewAdminHandler(ws.stores, ws.storage, filepath.Join(ws.storageCfg.BaseDir, "tls", "domains"), ws.caddyDataDir, ws.outbound, ws.cfg.ProtocolLogKeepDays, ws.hub)
+	adminHandler := handlers.NewAdminHandler(ws.stores, ws.storage, filepath.Join(ws.storageCfg.BaseDir, "tls", "domains"), ws.caddyDataDir, ws.outbound, ws.cfg.ProtocolLogKeepDays, ws.hub, webTZ)
 
 	// Apply BanMiddleware globally before public routes
 	ws.engine.Use(middleware.BanMiddleware(ws.stores))

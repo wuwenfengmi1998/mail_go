@@ -77,9 +77,9 @@
                                 <td>{{.Port}}</td>
                                 <td>{{if .User}}{{.User}}{{else}}—{{end}}</td>
                                 <td>{{if .TLS}}<span class="badge" style="background:#27ae60;color:#fff;">TLS</span>{{else}}<span class="badge" style="background:#95a5a6;color:#fff;">明文</span>{{end}}</td>
-                                <td>{{.Connected.Format "2006-01-02 15:04:05"}}</td>
+                                <td>{{time12 .Connected}}</td>
                                 <td>{{durationSeconds ($.now.Sub .Connected)}}s</td>
-                                <td>{{.LastActive.Format "2006-01-02 15:04:05"}}</td>
+                                <td>{{time12 .LastActive}}</td>
                                 <td>
                                     <form method="POST" action="/admin/connections/{{.ID}}/disconnect" style="display:inline;"
                                           onsubmit="return confirm('确定要断开 IP {{.IP}} 的所有连接并加入黑名单（180 天）吗？');">

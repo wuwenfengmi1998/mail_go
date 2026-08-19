@@ -35,12 +35,30 @@ type AdminHandler struct {
 	protocolLogKeepDays int
 	// hub 当前协议连接注册中心（「当前连接」页）
 	hub *connhub.Hub
+	// tz Web 展示时区（「今日」统计边界、日志日期筛选用），nil 回退本地时区
+	tz *time.Location
 }
 
 // NewAdminHandler creates a new AdminHandler with the given stores, attachment
 // storage, TLS directory, Caddy data directory and outbound delivery manager.
-func NewAdminHandler(stores *store.Stores, attStorage *storage.AttachmentStorage, tlsDir string, caddyDataDir string, ob *outbound.Manager, protocolLogKeepDays int, hub *connhub.Hub) *AdminHandler {
-	return &AdminHandler{stores: stores, storage: attStorage, tlsDir: tlsDir, caddyDataDir: caddyDataDir, outbound: ob, protocolLogKeepDays: protocolLogKeepDays, hub: hub}
+func NewAdminHandler(stores *store.Stores, attStorage *storage.AttachmentStorage, tlsDir string, caddyDataDir string, ob *outbound.Manager, protocolLogKeepDays int, hub *connhub.Hub, tz *time.Location) *AdminHandler {
+	return &AdminHandler{stores: stores, storage: attStorage, tlsDir: tlsDir, caddyDataDir: caddyDataDir, outbound: ob, protocolLogKeepDays: protocolLogKeepDays, hub: hub, tz: tz}
+}
+
+// displayTZ 返回 Web 展示时区（未配置时回退本地时区）。
+func (h *AdminHandler) displayTZ() *time.Location {
+	if h.tz != nil {
+		return h.tz
+	}
+	return time.Local
+}
+
+// dayStartIn 返回展示时区的「今日零点」，并转换为服务器本地时区：
+// 库中 CreatedAt 按写入时服务器本地时区序列化（RFC3339 文本），
+// 边界需同偏移才能保证 SQLite 文本比较正确。
+func (h *AdminHandler) dayStartIn() time.Time {
+	now := time.Now().In(h.displayTZ())
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, h.displayTZ()).In(time.Local)
 }
 
 // manualBanDuration 管理员手动封禁时长（180 天，与自动封禁档位上限制一致）。
@@ -119,8 +137,8 @@ func (h *AdminHandler) Dashboard(c *gin.Context) {
 	inboxSize, _ := h.stores.Mails.TotalSizeByFolder("INBOX")
 	sentSize, _ := h.stores.Mails.TotalSizeByFolder("Sent")
 
-	// Today and weekly statistics
-	todayStart := time.Now().Truncate(24 * time.Hour)
+	// Today and weekly statistics（「今日」按 Web 展示时区切日）
+	todayStart := h.dayStartIn()
 	weekStart := time.Now().AddDate(0, 0, -7)
 
 	todayReceived, _ := h.stores.Mails.CountByFolderSince("INBOX", todayStart)
@@ -860,8 +878,8 @@ func (h *AdminHandler) ListProtocolLogs(c *gin.Context) {
 		success = &v
 	}
 
-	from := parseDateQuery(c.Query("from"))
-	to := parseDateQuery(c.Query("to"))
+	from := h.parseDateQuery(c.Query("from"))
+	to := h.parseDateQuery(c.Query("to"))
 	// 日期选择到天，含当天
 	if !to.IsZero() {
 		to = to.AddDate(0, 0, 1)
@@ -883,7 +901,7 @@ func (h *AdminHandler) ListProtocolLogs(c *gin.Context) {
 	}
 
 	// 统计卡片：今日 + 全部成功/失败数（按协议），int64 → int 供模板 add 使用
-	dayStart := time.Now().Truncate(24 * time.Hour)
+	dayStart := h.dayStartIn()
 	todayStats, _ := h.stores.ProtocolLogs.CountStats(dayStart)
 	allStats, _ := h.stores.ProtocolLogs.CountStats(time.Time{})
 	normStats := func(m map[string]map[string]int64) map[string]map[string]int {
@@ -935,16 +953,17 @@ func (h *AdminHandler) CleanupProtocolLogs(c *gin.Context) {
 	c.Redirect(http.StatusFound, "/admin/protocol-logs")
 }
 
-// parseDateQuery 解析 YYYY-MM-DD 日期，失败返回零值。
-func parseDateQuery(s string) time.Time {
+// parseDateQuery 按 Web 展示时区解析 YYYY-MM-DD 日期，失败返回零值。
+// 解析结果转换为服务器本地时区，保证与库中时间序列化偏移一致。
+func (h *AdminHandler) parseDateQuery(s string) time.Time {
 	if s == "" {
 		return time.Time{}
 	}
-	t, err := time.ParseInLocation("2006-01-02", s, time.Local)
+	t, err := time.ParseInLocation("2006-01-02", s, h.displayTZ())
 	if err != nil {
 		return time.Time{}
 	}
-	return t
+	return t.In(time.Local)
 }
 
 // ListMails renders the admin mail list page showing all messages across all users.

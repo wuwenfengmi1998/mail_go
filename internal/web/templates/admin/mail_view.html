@@ -43,7 +43,7 @@
                         {{if .message.CcAddr}}<p><strong>抄送:</strong> {{.message.CcAddr}}</p>{{end}}
                         <p><strong>所属用户:</strong> {{if .message.User.ID}}{{.message.User.Username}}{{else}}—{{end}}</p>
                         <p><strong>文件夹:</strong> {{.message.Folder}}</p>
-                        <p><strong>时间:</strong> {{.message.Date.Format "2006-01-02 15:04:05"}}</p>
+                        <p><strong>时间:</strong> {{time12 .message.Date}}</p>
                     </div>
                     <div class="mail-body">
                         {{if .message.HtmlBody}}

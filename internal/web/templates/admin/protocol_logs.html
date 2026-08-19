@@ -92,7 +92,7 @@
                         <tbody>
                             {{range .logs}}
                             <tr>
-                                <td style="white-space:nowrap;">{{.CreatedAt.Format "2006-01-02 15:04:05"}}</td>
+                                <td style="white-space:nowrap;">{{time12 .CreatedAt}}</td>
                                 <td>
                                     {{if eq .Protocol "smtp"}}<span class="badge" style="background:#3498db;color:#fff;">SMTP</span>
                                     {{else if eq .Protocol "imap"}}<span class="badge" style="background:#9b59b6;color:#fff;">IMAP</span>

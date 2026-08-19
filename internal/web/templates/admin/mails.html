@@ -54,7 +54,7 @@
                                 <td>{{.Subject}}</td>
                                 <td>{{if .User.ID}}{{.User.Username}}{{else}}—{{end}}</td>
                                 <td>{{.Folder}}</td>
-                                <td>{{.Date.Format "2006-01-02 15:04"}}</td>
+                                <td>{{time12m .Date}}</td>
                             </tr>
                         {{end}}
                         </tbody>

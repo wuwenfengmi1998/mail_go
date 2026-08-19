@@ -82,9 +82,9 @@
                                     {{else}}<span class="badge" style="background:#95a5a6;color:#fff;">{{call $.statusText .Status}}</span>{{end}}
                                 </td>
                                 <td>{{.Attempts}}</td>
-                                <td>{{if or (eq .Status "pending") (eq .Status "deferred")}}{{.NextAttemptAt.Format "2006-01-02 15:04"}}{{else}}—{{end}}</td>
+                                <td>{{if or (eq .Status "pending") (eq .Status "deferred")}}{{time12m .NextAttemptAt}}{{else}}—{{end}}</td>
                                 <td style="max-width:280px;word-break:break-all;">{{if .LastResponse}}{{.LastResponse}}{{else}}{{.LastError}}{{end}}</td>
-                                <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+                                <td>{{time12m .CreatedAt}}</td>
                                 <td>
                                     {{if or (eq .Status "failed") (eq .Status "deferred") (eq .Status "canceled") (eq .Status "pending")}}
                                     <form method="POST" action="/admin/outbound/{{.ID}}/retry" style="display:inline;">

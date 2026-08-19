@@ -55,7 +55,7 @@
                                 </td>
                                 <td>{{.FailCount}}</td>
                                 <td>{{if .Reason}}{{.Reason}}{{else}}—{{end}}</td>
-                                <td>{{.ExpiresAt.Format "2006-01-02 15:04:05"}}{{if not .Active}}（已过期）{{end}}</td>
+                                <td>{{time12 .ExpiresAt}}{{if not .Active}}（已过期）{{end}}</td>
                                 <td>
                                     <form method="POST" action="/admin/bans/{{.ID}}/unban" style="display:inline;"
                                           onsubmit="return confirm('确定要解封 IP {{.IPAddress}} 吗？解封后该 IP 的封禁档位将清零。');">

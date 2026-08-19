@@ -65,7 +65,7 @@
             </div>
             <div class="detail-row">
                 <span class="detail-label">解封时间</span>
-                <span class="detail-value">{{.entry.ExpiresAt.Format "2006-01-02 15:04:05"}}</span>
+                <span class="detail-value">{{time12 .entry.ExpiresAt}}</span>
             </div>
         </div>
         {{end}}
