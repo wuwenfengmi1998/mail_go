@@ -50,7 +50,7 @@
             <div class="mail-body-wrap">
                 <div class="mail-body">
                     {{if .message.HtmlBody}}
-                    <iframe class="mail-body-iframe" srcdoc="{{.message.HtmlBody | safeJS}}" sandbox="allow-same-origin" onload="this.style.height=this.contentDocument.body.scrollHeight+20+'px'"></iframe>
+                    <iframe class="mail-body-iframe" srcdoc="{{.message.HtmlBody}}" sandbox="allow-same-origin" onload="this.style.height=this.contentDocument.body.scrollHeight+20+'px'"></iframe>
                     {{else}}
                     <pre>{{.message.TextBody}}</pre>
                     {{end}}

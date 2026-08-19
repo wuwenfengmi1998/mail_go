@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"mail_go/config"
 	"mail_go/internal/db"
@@ -192,5 +193,77 @@ func TestNewWebServerRejectsBadSecretKeys(t *testing.T) {
 				t.Fatalf("NewWebServer should reject secret key %q", tc.key)
 			}
 		})
+	}
+}
+
+// encodeSessionCookie 用配置密钥伪造一个签名合法的会话 cookie。
+// 仅用于测试会话治理逻辑（生产密钥不会泄露）。
+func encodeSessionCookie(t *testing.T, secretKey string, values map[interface{}]interface{}) string {
+	t.Helper()
+	sc := securecookie.New([]byte(secretKey), nil)
+	enc, err := sc.Encode("mail_go_session", values)
+	if err != nil {
+		t.Fatalf("encode session: %v", err)
+	}
+	return enc
+}
+
+// authCookieValues 构造 AuthMiddleware 可识别的最小会话内容。
+func authCookieValues(userID uint, loginAt int64) map[interface{}]interface{} {
+	return map[interface{}]interface{}{
+		"userID":    userID,
+		"userEmail": "alice@example.com",
+		"isAdmin":   false,
+		"loginAt":   loginAt,
+	}
+}
+
+// P3 #16：会话绝对过期（7 天）后强制重新登录。
+func TestSessionAbsoluteExpiryForcesRelogin(t *testing.T) {
+	const key = "0123456789abcdef0123456789abcdef"
+	ws, _ := newTestWebServer(t, key)
+	srv := httptest.NewServer(ws.Handler())
+	defer srv.Close()
+
+	expired := time.Now().Add(-8 * 24 * time.Hour).Unix()
+	cookie := encodeSessionCookie(t, key, authCookieValues(1, expired))
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/inbox", nil)
+	req.AddCookie(&http.Cookie{Name: "mail_go_session", Value: cookie})
+	client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusFound || !strings.HasPrefix(resp.Header.Get("Location"), "/login") {
+		t.Fatalf("expired session should redirect to /login, got %d Location=%q",
+			resp.StatusCode, resp.Header.Get("Location"))
+	}
+}
+
+// P3 #16：未过期会话（含滑动续期窗口内）正常访问。
+func TestSessionWithinExpiryWorks(t *testing.T) {
+	const key = "0123456789abcdef0123456789abcdef"
+	ws, _ := newTestWebServer(t, key)
+	srv := httptest.NewServer(ws.Handler())
+	defer srv.Close()
+
+	cookie := encodeSessionCookie(t, key, authCookieValues(1, time.Now().Add(-time.Hour).Unix()))
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/inbox", nil)
+	req.AddCookie(&http.Cookie{Name: "mail_go_session", Value: cookie})
+	client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("fresh session should access inbox, got %d", resp.StatusCode)
 	}
 }

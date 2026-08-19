@@ -77,7 +77,7 @@
         }
     });
     {{if .bodyContent}}
-    quill.root.innerHTML = {{.bodyContent | safeJS}};
+    quill.root.innerHTML = {{.bodyContent | jsonify}};
     {{end}}
 
     document.getElementById('compose-form').addEventListener('submit', function () {

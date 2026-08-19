@@ -103,11 +103,14 @@ func (h *AuthHandler) DoLogin(c *gin.Context) {
 	// Login successful: reset fail count
 	h.stores.Bans.ResetFail(ip)
 
-	// Set session values
+	// Set session values（先清空旧会话状态，防止残留值；记录登录时间
+	// 供中间件做绝对过期与滑动续期）
 	session := sessions.Default(c)
+	session.Clear()
 	session.Set("userID", user.ID)
 	session.Set("userEmail", user.Username+"@"+user.Domain.Name)
 	session.Set("isAdmin", user.IsAdmin)
+	session.Set("loginAt", time.Now().Unix())
 	if err := session.Save(); err != nil {
 		c.HTML(200, "login", gin.H{
 			"error":          "会话保存失败，请重试",
@@ -203,11 +206,14 @@ func (h *AuthHandler) LDAPLogin(c *gin.Context) {
 	// Login successful: reset fail count
 	h.stores.Bans.ResetFail(ip)
 
-	// Set session values
+	// Set session values（先清空旧会话状态，防止残留值；记录登录时间
+	// 供中间件做绝对过期与滑动续期）
 	session := sessions.Default(c)
+	session.Clear()
 	session.Set("userID", user.ID)
 	session.Set("userEmail", user.Username+"@"+user.Domain.Name)
 	session.Set("isAdmin", user.IsAdmin)
+	session.Set("loginAt", time.Now().Unix())
 	if err := session.Save(); err != nil {
 		c.HTML(200, "login", gin.H{
 			"error":          "会话保存失败，请重试",
@@ -338,11 +344,14 @@ func (h *AuthHandler) OAuth2Callback(c *gin.Context) {
 		return
 	}
 
-	// Set session values
+	// Set session values（先清空旧会话状态，防止残留值；记录登录时间
+	// 供中间件做绝对过期与滑动续期）
 	session := sessions.Default(c)
+	session.Clear()
 	session.Set("userID", user.ID)
 	session.Set("userEmail", user.Username+"@"+user.Domain.Name)
 	session.Set("isAdmin", user.IsAdmin)
+	session.Set("loginAt", time.Now().Unix())
 	if err := session.Save(); err != nil {
 		c.HTML(200, "login", gin.H{
 			"error":          "会话保存失败，请重试",

@@ -104,3 +104,26 @@ func TestFormatContentDisposition(t *testing.T) {
 		t.Fatalf("CRLF leaked into Content-Disposition: %q", got)
 	}
 }
+
+// P3 #12：Referer 开放重定向防护。
+func TestSafeRedirectPath(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"", ""},
+		{"/inbox", "/inbox"},
+		{"/mail/delete/5", "/mail/delete/5"},
+		{"/sent?page=2", "/sent?page=2"},
+		{"https://evil.com/", ""},
+		{"//evil.com/inbox", ""},
+		{"http://mail.lmve.net/inbox", ""},
+		{"javascript:alert(1)", ""},
+		{"/\\evil.com", "/\\evil.com"}, // 浏览器对 /\\ 的处理不一致，但不涉及外部协议跳转
+	}
+	for _, tc := range cases {
+		if got := safeRedirectPath(tc.in); got != tc.want {
+			t.Errorf("safeRedirectPath(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

@@ -212,38 +212,60 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 	if multipartErr == nil {
 		files := form.File["attachments"]
 		if len(files) > 0 {
-			// Check attachment quota before saving
-			user, _ := h.stores.Users.GetByID(userID)
-			if user != nil {
-				var totalNewSize int64
-				for _, file := range files {
-					totalNewSize += file.Size
-				}
-				if user.UsedBytes+totalNewSize > user.QuotaBytes {
-					c.HTML(http.StatusBadRequest, "compose", gin.H{
-						"currentUser":  currentUser,
-						"activeFolder": "compose",
-						"error":        fmt.Sprintf("附件超出配额限制。已用 %s / 总配额 %s", formatBytes(user.UsedBytes), formatBytes(user.QuotaBytes)),
-						"to":           to,
-						"subject":      subject,
-						"cc":           cc,
-						"bodyContent":  htmlBody,
-						"usedBytes":    user.UsedBytes,
-						"quotaBytes":   user.QuotaBytes,
-					})
-					return
-				}
+			// 原子预扣附件配额（单条 SQL：used_bytes + n <= quota_bytes 才生效），
+			// 防止并发提交绕过配额检查（TOCTOU）。后续保存失败会补偿回退。
+			var totalNewSize int64
+			for _, file := range files {
+				totalNewSize += file.Size
 			}
+			reserved, err := h.stores.Users.TryReserveQuota(userID, totalNewSize)
+			if err != nil {
+				c.HTML(http.StatusInternalServerError, "compose", gin.H{
+					"currentUser":  currentUser,
+					"activeFolder": "compose",
+					"error":        "配额检查失败，请稍后重试",
+					"to":           to,
+					"subject":      subject,
+					"cc":           cc,
+					"bodyContent":  htmlBody,
+					"usedBytes":    currentUser.UsedBytes,
+					"quotaBytes":   currentUser.QuotaBytes,
+				})
+				return
+			}
+			if !reserved {
+				user, _ := h.stores.Users.GetByID(userID)
+				usedBytes, quotaBytes := currentUser.UsedBytes, currentUser.QuotaBytes
+				if user != nil {
+					usedBytes, quotaBytes = user.UsedBytes, user.QuotaBytes
+				}
+				c.HTML(http.StatusBadRequest, "compose", gin.H{
+					"currentUser":  currentUser,
+					"activeFolder": "compose",
+					"error":        fmt.Sprintf("附件超出配额限制。已用 %s / 总配额 %s", formatBytes(usedBytes), formatBytes(quotaBytes)),
+					"to":           to,
+					"subject":      subject,
+					"cc":           cc,
+					"bodyContent":  htmlBody,
+					"usedBytes":    usedBytes,
+					"quotaBytes":   quotaBytes,
+				})
+				return
+			}
+
 			// Read all attachment files into memory once (used for both the
 			// MIME message body and the stored attachment records).
+			// 读取失败的文件回退已预扣的配额。
 			for _, file := range files {
 				f, err := file.Open()
 				if err != nil {
+					_ = h.stores.Users.UpdateUsedBytes(userID, -file.Size)
 					continue
 				}
 				buf, readErr := io.ReadAll(f)
 				f.Close()
 				if readErr != nil {
+					_ = h.stores.Users.UpdateUsedBytes(userID, -file.Size)
 					continue
 				}
 
@@ -394,10 +416,12 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 	}
 
 	// Save attachment records linked to the Sent copy (bytes were already
-	// read during message construction).
+	// read during message construction). 配额已在前面原子预扣，
+	// 保存/落库失败的附件需要补偿回退。
 	for _, att := range attachments {
 		relPath, err := h.storage.Save(att.filename, att.data)
 		if err != nil {
+			_ = h.stores.Users.UpdateUsedBytes(userID, -int64(len(att.data)))
 			continue
 		}
 
@@ -408,9 +432,10 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 			ContentType: att.contentType,
 			FileSize:    int64(len(att.data)),
 		}
-		_ = h.stores.Attachments.Create(attRecord)
-		// Update user used bytes
-		_ = h.stores.Users.UpdateUsedBytes(userID, attRecord.FileSize)
+		if err := h.stores.Attachments.Create(attRecord); err != nil {
+			_ = h.stores.Users.UpdateUsedBytes(userID, -attRecord.FileSize)
+			continue
+		}
 	}
 
 	c.Redirect(http.StatusFound, "/sent")
@@ -574,6 +599,16 @@ func (h *MailHandler) Sent(c *gin.Context) {
 	})
 }
 
+// safeRedirectPath 仅接受同站相对路径（以 / 开头且非 //），
+// 防止把用户重定向到外部站点（开放重定向）。非法值返回空串，
+// 调用方应回退到默认路径。
+func safeRedirectPath(referer string) string {
+	if referer == "" || !strings.HasPrefix(referer, "/") || strings.HasPrefix(referer, "//") {
+		return ""
+	}
+	return referer
+}
+
 // Delete removes a message by ID after verifying ownership.
 func (h *MailHandler) Delete(c *gin.Context) {
 	userID := c.GetUint("userID")
@@ -598,8 +633,8 @@ func (h *MailHandler) Delete(c *gin.Context) {
 	_ = h.stores.Attachments.DeleteByMessage(uint(id))
 	_ = h.stores.Mails.Delete(uint(id))
 
-	// Redirect back based on the folder
-	referer := c.GetHeader("Referer")
+	// Redirect back based on the folder（仅同站相对路径，防开放重定向）
+	referer := safeRedirectPath(c.GetHeader("Referer"))
 	if referer == "" {
 		referer = "/inbox"
 	}
@@ -623,7 +658,8 @@ func (h *MailHandler) MarkRead(c *gin.Context) {
 
 	_ = h.stores.Mails.MarkRead(uint(id))
 
-	referer := c.GetHeader("Referer")
+	// Redirect back based on the folder（仅同站相对路径，防开放重定向）
+	referer := safeRedirectPath(c.GetHeader("Referer"))
 	if referer == "" {
 		referer = "/inbox"
 	}

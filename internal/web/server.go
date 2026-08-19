@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"math"
@@ -71,11 +72,15 @@ func templateFuncs() template.FuncMap {
 		"domainName": func(domainID uint, domains []interface{}) string {
 			return fmt.Sprintf("Domain #%d", domainID)
 		},
-		"safeHTML": func(s string) template.HTML {
-			return template.HTML(s)
-		},
-		"safeJS": func(s string) template.JS {
-			return template.JS(s)
+		// jsonify 把任意值序列化为安全的 JS 字面量（JSON 字符串），
+		// 用于在 <script> 上下文中注入数据。encoding/json 默认转义
+		// < > &（\u003c 等），无法逃出 </script>，杜绝 script 注入。
+		"jsonify": func(v interface{}) template.JS {
+			b, err := json.Marshal(v)
+			if err != nil {
+				return template.JS("null")
+			}
+			return template.JS(b)
 		},
 		"formatBytes": func(b int64) string {
 			return formatBytes(b)

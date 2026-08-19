@@ -111,3 +111,77 @@ type addrMock string
 
 func (a addrMock) Network() string { return "tcp" }
 func (a addrMock) String() string  { return string(a) }
+
+// P3 #13：配额原子预扣——并发/超额场景下不得绕过配额。
+func TestTryReserveQuota(t *testing.T) {
+	s := newTestStores(t)
+
+	// 用户配额 1000
+	user := &db.User{
+		Username:   "quota_user",
+		PasswordHash: "x",
+		DomainID:   0,
+		QuotaBytes: 1000,
+		IsActive:   true,
+	}
+	if err := s.Users.Create(user); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if user.ID == 0 {
+		t.Fatal("user ID must be assigned")
+	}
+
+	// 预扣 600 成功
+	ok, err := s.Users.TryReserveQuota(user.ID, 600)
+	if err != nil || !ok {
+		t.Fatalf("reserve 600: ok=%v err=%v", ok, err)
+	}
+	// 再扣 400 正好用完
+	ok, err = s.Users.TryReserveQuota(user.ID, 400)
+	if err != nil || !ok {
+		t.Fatalf("reserve 400: ok=%v err=%v", ok, err)
+	}
+	// 超出配额被拒且不改变 used_bytes
+	ok, err = s.Users.TryReserveQuota(user.ID, 1)
+	if err != nil {
+		t.Fatalf("reserve beyond quota: %v", err)
+	}
+	if ok {
+		t.Fatal("reserve beyond quota must fail")
+	}
+	got, _ := s.Users.GetByID(user.ID)
+	if got.UsedBytes != 1000 {
+		t.Fatalf("used_bytes = %d, want 1000 (no partial charge)", got.UsedBytes)
+	}
+
+	// 释放后可以再次预扣
+	if err := s.Users.UpdateUsedBytes(user.ID, -500); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	ok, err = s.Users.TryReserveQuota(user.ID, 500)
+	if err != nil || !ok {
+		t.Fatalf("reserve after release: ok=%v err=%v", ok, err)
+	}
+}
+
+// P3 #13：非正 delta 不允许（防御）。
+func TestTryReserveQuotaNonPositiveDelta(t *testing.T) {
+	s := newTestStores(t)
+	user := &db.User{Username: "u", PasswordHash: "x", QuotaBytes: 100}
+	if err := s.Users.Create(user); err != nil {
+		t.Fatal(err)
+	}
+	for _, delta := range []int64{0, -10} {
+		ok, err := s.Users.TryReserveQuota(user.ID, delta)
+		if err != nil {
+			t.Fatalf("delta %d: %v", delta, err)
+		}
+		if ok {
+			t.Fatalf("delta %d must not reserve", delta)
+		}
+	}
+	got, _ := s.Users.GetByID(user.ID)
+	if got.UsedBytes != 0 {
+		t.Fatalf("used_bytes = %d, want 0", got.UsedBytes)
+	}
+}

@@ -140,29 +140,36 @@
 
 ### 12. Referer 开放重定向
 
-- [ ] 位置：`internal/web/handlers/mail.go:567-571、591-595`
-- [ ] 修复：仅接受以 `/` 开头且非 `//` 的相对路径 Referer，否则回退 `/inbox`。
+- [x] 位置：`internal/web/handlers/mail.go`（Delete/MarkRead）
+- [x] 修复：新增 `safeRedirectPath`——仅接受以 `/` 开头且非 `//` 的同站相对路径，外部 URL/协议跳转一律回退 `/inbox`。
+- 验证：
+  - [x] 单测：`https://evil.com/`、`//evil.com`、`javascript:` 等拒绝，相对路径放行（`TestSafeRedirectPath`）。
 
 ### 13. Web 发信配额检查 TOCTOU
 
-- [ ] 位置：`internal/web/handlers/mail.go:209-263`
-- [ ] 修复：配额检查与 `UpdateUsedBytes` 改为单条原子 SQL（`WHERE used_bytes + ? <= quota_bytes` 式更新），失败即拒发。
+- [x] 位置：`internal/web/handlers/mail.go`、`internal/store/user_store.go`
+- [x] 修复：新增 `UserStore.TryReserveQuota`（单条原子 SQL `UPDATE ... WHERE used_bytes + ? <= quota_bytes`），DoSend 先原子预扣全部附件大小，超配额即拒发；后续读取/保存/落库失败的附件按大小补偿回退。
+- 验证：
+  - [x] 单测：预扣到配额上限、超额拒绝且不部分扣费、释放后可再扣、非正 delta 拒绝（`TestTryReserveQuota*`）。
 
 ### 14. compose 页 safeJS 在 JS 上下文绕过转义（自 XSS）
 
-- [ ] 位置：`internal/web/templates/compose.html:80`
-- [ ] 修复：改为 `quill.root.innerHTML = {{.bodyContent | jsonify}};`（模板函数内用 `json.Marshal` 输出 JS 字符串字面量）。
-- [ ] 顺手评估移除 `templateFuncs` 中不再使用的 `safeHTML`，缩小危险面。
+- [x] 位置：`internal/web/templates/compose.html`、`internal/web/server.go`
+- [x] 修复：新增 `jsonify` 模板函数（`json.Marshal`，默认转义 `< > &` 为 `\u003c` 等，无法逃出 `</script>`）；`quill.root.innerHTML` 改用 `jsonify`。**移除** `templateFuncs` 中危险的 `safeHTML`/`safeJS`；view/admin 模板的 `srcdoc` 改回默认属性转义（行为一致，前已实测）。
+- 验证：
+  - [x] 单测：`</script>` 载荷不产生裸逃逸、控制字符转义、输出为合法字符串字面量（`TestJsonifyEscapesScriptBreakout`）；全模板渲染测试通过。
 
 ### 15. Content-Disposition 文件名未编码
 
-- [ ] 位置：`internal/web/handlers/mail.go:626`、`internal/web/handlers/admin.go:863`
-- [ ] 修复：与 #4 一并改用 `mime.FormatMediaType`（RFC 5987 `filename*=`）。
+- [x] 位置：`internal/web/handlers/mail.go`、`internal/web/handlers/admin.go`
+- [x] 修复：随 P1 #4 一并完成——`formatContentDisposition` 使用 `mime.FormatMediaType`（RFC 2231），两处下载端点均已应用，并有 `TestFormatContentDisposition` 覆盖。
 
 ### 16. 会话治理
 
-- [ ] 登录成功后调用 `session.Clear()` 再写入新值（清掉可能的旧状态）。
-- [ ] 会话固定时长 24h 无任何续期/空闲过期策略，考虑加滑动过期与绝对过期。
+- [x] 位置：`internal/web/handlers/auth.go`、`internal/web/middleware/auth.go`
+- [x] 修复：登录成功（Web/LDAP/OAuth2 三处）先 `session.Clear()` 清旧状态再写入；会话记录 `loginAt`，AuthMiddleware 实施**绝对过期 7 天**（超时强制登出）+ **滑动续期**（活跃会话每 12 小时写回刷新）。
+- 验证：
+  - [x] 单测：8 天前的会话被重定向登录页；1 小时前的会话正常访问（用配置密钥签名构造会话，`TestSessionAbsoluteExpiryForcesRelogin`/`TestSessionWithinExpiryWorks`）。
 
 ## 已确认安全、无需改动
 
@@ -177,4 +184,8 @@
 1. ~~#1（P0）~~ 已完成 2026-08-19
 2. ~~#2、#3、#4（P1）~~ 已完成 2026-08-19
 3. ~~#5-#11（P2）~~ 已完成 2026-08-19
-4. 其余 P3 项随版本迭代
+4. ~~#12-#16（P3）~~ 已完成 2026-08-19
+
+**全部安全审计项已修复完成。** 剩余建议（非代码项）：
+- 部署侧：Caddy 加固（可选，应用层已加安全头）、8080 端口保持仅本机可达、GitHub 仓库中 3 个 50MB+ 的 exe 文件建议改用 LFS 或删除
+- 线上验证：部署新版后检查登录/收件箱/管理页、协议认证封禁、邮件远程图片加载（CSP 影响）

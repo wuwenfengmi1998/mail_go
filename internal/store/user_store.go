@@ -22,6 +22,9 @@ type UserStore interface {
 	ListAll(page, size int) ([]db.User, int64, error)
 	UpdateUsedBytes(id uint, delta int64) error
 	UpdatePassword(userID uint, hashedPassword string) error
+	// TryReserveQuota 原子预扣 delta 字节：仅在不超过配额时生效并返回 true，
+	// 否则不做任何修改返回 false。防止并发提交绕过配额检查（TOCTOU）。
+	TryReserveQuota(userID uint, delta int64) (bool, error)
 }
 
 // userStoreGorm implements UserStore using GORM.
@@ -122,6 +125,22 @@ func (s *userStoreGorm) List(domainID uint, page, size int) ([]db.User, int64, e
 func (s *userStoreGorm) UpdateUsedBytes(id uint, delta int64) error {
 	return s.db.Model(&db.User{}).Where("id = ?", id).
 		Update("used_bytes", gorm.Expr("used_bytes + ?", delta)).Error
+}
+
+// TryReserveQuota atomically reserves delta bytes for a user within quota.
+// The reservation is applied (used_bytes incremented) only when it does not
+// exceed quota_bytes; otherwise no change is made and false is returned.
+func (s *userStoreGorm) TryReserveQuota(userID uint, delta int64) (bool, error) {
+	if delta <= 0 {
+		return false, nil
+	}
+	res := s.db.Model(&db.User{}).
+		Where("id = ? AND used_bytes + ? <= quota_bytes", userID, delta).
+		Update("used_bytes", gorm.Expr("used_bytes + ?", delta))
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
 }
 
 // UpdatePassword updates the password hash for a user and clears the

@@ -1,11 +1,39 @@
 package middleware
 
 import (
+	"time"
+
 	"mail_go/internal/store"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
+
+const (
+	// sessionAbsoluteMaxAge 会话绝对过期时间：超过后强制重新登录。
+	sessionAbsoluteMaxAge = 7 * 24 * time.Hour
+	// sessionSlidingRefresh 滑动续期阈值：距上次刷新超过该时长则更新
+	// loginAt 并写回 cookie，保持活跃用户不中断（约 12 小时写回一次）。
+	sessionSlidingRefresh = 12 * time.Hour
+)
+
+// sessionInt64 兼容不同底层 session store 解码出的整数类型。
+func sessionInt64(v interface{}) (int64, bool) {
+	switch n := v.(type) {
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	case uint:
+		return int64(n), true
+	case uint64:
+		return int64(n), true
+	case float64:
+		return int64(n), true
+	default:
+		return 0, false
+	}
+}
 
 // AuthMiddleware checks for a valid session and loads the current user
 // into the Gin context. If no valid session exists, it redirects to /login.
@@ -17,6 +45,23 @@ func AuthMiddleware(stores *store.Stores) gin.HandlerFunc {
 			c.Redirect(302, "/login")
 			c.Abort()
 			return
+		}
+
+		// 会话绝对过期：登录超过 7 天强制重新登录；
+		// 滑动续期：活跃会话每 12 小时刷新一次 loginAt。
+		if loginAt, ok := sessionInt64(session.Get("loginAt")); ok {
+			elapsed := time.Since(time.Unix(loginAt, 0))
+			if elapsed > sessionAbsoluteMaxAge {
+				session.Clear()
+				session.Save()
+				c.Redirect(302, "/login")
+				c.Abort()
+				return
+			}
+			if elapsed > sessionSlidingRefresh {
+				session.Set("loginAt", time.Now().Unix())
+				session.Save()
+			}
 		}
 
 		// userID is stored as uint in session, but sessions.Get returns interface{}

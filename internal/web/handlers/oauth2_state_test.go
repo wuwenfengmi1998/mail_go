@@ -4,6 +4,7 @@ package handlers
 // 旧实现 state 为硬编码常量且回调完全不校验（登录 CSRF / 授权码注入）。
 
 import (
+	"encoding/json"
 	"html/template"
 	"math"
 	"net/http"
@@ -32,8 +33,10 @@ func testTemplateFuncs() template.FuncMap {
 		"ceilDiv":    func(a, b int) int { return int(math.Ceil(float64(a) / float64(b))) },
 		"seq":        func(n int) []int { r := make([]int, n); for i := range r { r[i] = i + 1 }; return r },
 		"domainName": func(domainID uint, domains []interface{}) string { return "Domain #1" },
-		"safeHTML":   func(s string) template.HTML { return template.HTML(s) },
-		"safeJS":     func(s string) template.JS { return template.JS(s) },
+		"jsonify": func(v interface{}) template.JS {
+			b, _ := json.Marshal(v)
+			return template.JS(b)
+		},
 		"formatBytes": func(b int64) string {
 			return "1 KB"
 		},
