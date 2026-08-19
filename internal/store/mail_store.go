@@ -28,6 +28,10 @@ type MailStore interface {
 	MarkRead(id uint) error
 	MarkReadState(id uint, read bool) error
 	MarkFlagged(id uint, flagged bool) error
+	// SetReadStates 批量设置多封邮件的已读状态（单条 UPDATE ... IN）。
+	SetReadStates(ids []uint, read bool) error
+	// SetFlaggedStates 批量设置多封邮件的星标状态（单条 UPDATE ... IN）。
+	SetFlaggedStates(ids []uint, flagged bool) error
 	MoveToFolder(id uint, folder string) error
 	Delete(id uint) error
 	CountUnread(userID uint, folder string) (int64, error)
@@ -101,6 +105,24 @@ func (s *mailStoreGorm) MarkReadState(id uint, read bool) error {
 // MarkFlagged sets the IsFlagged flag for a message.
 func (s *mailStoreGorm) MarkFlagged(id uint, flagged bool) error {
 	return s.db.Model(&db.Message{}).Where("id = ?", id).Update("is_flagged", flagged).Error
+}
+
+// SetReadStates 批量设置多封邮件的已读状态。
+// 客户端整批标记已读（手机同步后 STORE +FLAGS \Seen）时，逐条 UPDATE
+// 会产生大量写事务并占住连接，这里合并为单条 SQL。
+func (s *mailStoreGorm) SetReadStates(ids []uint, read bool) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.db.Model(&db.Message{}).Where("id IN ?", ids).Update("is_read", read).Error
+}
+
+// SetFlaggedStates 批量设置多封邮件的星标状态。
+func (s *mailStoreGorm) SetFlaggedStates(ids []uint, flagged bool) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.db.Model(&db.Message{}).Where("id IN ?", ids).Update("is_flagged", flagged).Error
 }
 
 // MoveToFolder changes the folder of a message.

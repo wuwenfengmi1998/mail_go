@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"path/filepath"
 	"strings"
 	"time"
@@ -105,6 +106,8 @@ func templateFuncs() template.FuncMap {
 		"truncate": truncate,
 		// shortDate 按 QQ 邮箱习惯格式化：今天显示 HH:mm，今年显示 MM-DD，更早显示 YYYY-MM-DD。
 		"shortDate": shortDate,
+		// localTime 把存储的 UTC 时间转换为 Web 配置时区（默认 Asia/Shanghai）。
+		"localTime": localTime,
 		// avatarStyle 根据字符串哈希生成头像背景/前景色。
 		"avatarStyle": avatarStyle,
 	}
@@ -157,8 +160,10 @@ func truncate(s string, n int) string {
 
 // shortDate formats a time like QQ Mail does: today -> HH:mm,
 // this year -> MM-DD, otherwise -> YYYY-MM-DD.
+// 时间先按 Web 配置时区转换（库内为 UTC），"今天"判断也使用该时区。
 func shortDate(t time.Time) string {
-	now := time.Now()
+	t = inWebTZ(t)
+	now := time.Now().In(t.Location())
 	if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
 		return t.Format("15:04")
 	}
@@ -166,6 +171,48 @@ func shortDate(t time.Time) string {
 		return t.Format("01-02")
 	}
 	return t.Format("2006-01-02")
+}
+
+// webTZ 是 Web 界面显示时间使用的时区（默认 Asia/Shanghai）。
+var webTZ = time.Local
+
+// fixedTimezone 解析 "+08:00"/"UTC+8" 形式的固定偏移时区；解析失败返回 nil。
+func fixedTimezone(s string) *time.Location {
+	s = strings.TrimSpace(s)
+	sign := 1
+	rest := s
+	if strings.HasPrefix(rest, "+") {
+		rest = rest[1:]
+	} else if strings.HasPrefix(rest, "-") {
+		sign = -1
+		rest = rest[1:]
+	}
+	if strings.HasPrefix(strings.ToUpper(rest), "UTC") {
+		rest = strings.TrimSpace(rest[3:])
+	}
+	parts := strings.SplitN(rest, ":", 2)
+	h, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil || h < 0 || h > 23 {
+		return nil
+	}
+	m := 0
+	if len(parts) == 2 {
+		if m, err = strconv.Atoi(strings.TrimSpace(parts[1])); err != nil || m < 0 || m > 59 {
+			return nil
+		}
+	}
+	offset := sign * (h*3600 + m*60)
+	return time.FixedZone("UTC"+strconv.Itoa(offset/3600), offset)
+}
+
+// inWebTZ 把时间转换到 Web 展示时区。
+func inWebTZ(t time.Time) time.Time {
+	return t.In(webTZ)
+}
+
+// localTime 是 localTime 模板函数的实现（转换到 Web 展示时区）。
+func localTime(t time.Time) time.Time {
+	return t.In(webTZ)
 }
 
 // avatarStyle returns inline CSS colors derived from a string hash.
@@ -182,6 +229,17 @@ func avatarStyle(s string) string {
 func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, storageCfg config.StorageConfig, authCfg config.AuthConfig, banCfg config.BanConfig, caddyCfg config.CaddyConfig, ob *outbound.Manager, hub *connhub.Hub, pusher imap_server.Pusher) (*WebServer, error) {
 	if err := config.ValidateSecretKey(cfg.SecretKey); err != nil {
 		return nil, err
+	}
+
+	// Web 展示时区：邮件日期库内统一 UTC 存储，界面按配置时区显示。
+	if cfg.Timezone != "" {
+		if loc, err := time.LoadLocation(cfg.Timezone); err == nil {
+			webTZ = loc
+		} else if loc2 := fixedTimezone(cfg.Timezone); loc2 != nil {
+			webTZ = loc2
+		} else {
+			return nil, fmt.Errorf("无效的 Web 时区配置 %q: %v", cfg.Timezone, err)
+		}
 	}
 
 	gin.SetMode(gin.ReleaseMode)
