@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"math"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -56,6 +57,8 @@ type WebServer struct {
 	caddyDataDir string
 	outbound     *outbound.Manager
 	hub          *connhub.Hub
+	// staticFS 内嵌的静态资源（/static 路由），二进制自包含
+	staticFS http.FileSystem
 	// pusher 邮件状态变化推送（IMAP 客户端实时同步），可空
 	pusher imap_server.Pusher
 }
@@ -291,6 +294,12 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 	template.Must(tmpl.ParseGlob("internal/web/templates/admin/*.html"))
 	engine.SetHTMLTemplate(tmpl)
 
+	// 内嵌静态资源根目录（/static 路由数据源）
+	staticSub, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		return nil, fmt.Errorf("加载内嵌静态资源失败: %w", err)
+	}
+
 	ws := &WebServer{
 		engine:       engine,
 		stores:       stores,
@@ -302,6 +311,7 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 		caddyDataDir: caddyCfg.DataDir,
 		outbound:     ob,
 		hub:          hub,
+		staticFS:     http.FS(staticSub),
 		pusher:       pusher,
 	}
 
@@ -321,8 +331,9 @@ func (ws *WebServer) registerRoutes() {
 	ws.engine.Use(middleware.SecurityHeaders())
 
 	// 静态资源（本地化的 Quill 编辑器等第三方前端库）。
-	// 同源加载以满足 CSP script-src/style-src 'self'，且服务器离线可用。
-	ws.engine.Static("/static", "internal/web/static")
+	// 内嵌于二进制：同源加载以满足 CSP script-src/style-src 'self'，
+	// 且不依赖部署目录（install.sh 只复制二进制 + templates）。
+	ws.engine.StaticFS("/static", ws.staticFS)
 
 	// Public routes (no auth required)
 	ws.engine.GET("/login", authHandler.ShowLogin)
