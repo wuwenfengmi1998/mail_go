@@ -52,6 +52,13 @@ func newMailStore(database *gorm.DB) MailStore {
 
 // Create inserts a new message record.
 func (s *mailStoreGorm) Create(msg *db.Message) error {
+	// 日期统一为 UTC 存储：date 列在 SQLite 中是文本，混合时区偏移
+	// （+08:00/-04:00 等）会让 ORDER BY date 变成错误的字典序（Web 列表
+	// 排序错乱、IMAP 序号与客户端日期视图不一致）。统一 UTC 后字典序
+	// 即时间序，所有排序路径（Web/IMAP/seqOf）全链路一致。
+	if msg != nil {
+		msg.Date = msg.Date.UTC()
+	}
 	return s.db.Create(msg).Error
 }
 
