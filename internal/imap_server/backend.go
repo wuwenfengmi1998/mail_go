@@ -45,14 +45,14 @@ func (b *imapBackend) Updates() <-chan backend.Update {
 }
 
 // buildNewMessageUpdate 为一条新投递到 mailbox 的邮件构造 IMAP 更新。
-// seq 取该邮件在邮箱中的序号（通知时机在入库之后，取当前列表长度）。
+// seq 取该邮件在邮箱中的实际序号（最新在前，通常为 1）。
 func buildNewMessageUpdate(stores *store.Stores, userEmail, mailbox string, msg *db.Message) *backend.MessageUpdate {
 	if stores == nil || msg == nil || userEmail == "" || mailbox == "" {
 		return nil
 	}
-	seq := uint32(1)
-	if msgs, err := stores.Mails.ListAllByUserAndFolder(msg.UserID, mailbox); err == nil {
-		seq = uint32(len(msgs))
+	seq := seqOf(stores, msg.UserID, mailbox, msg.ID)
+	if seq == 0 {
+		seq = 1
 	}
 
 	imapMsg := imap.NewMessage(seq, []imap.FetchItem{imap.FetchUid, imap.FetchFlags, imap.FetchInternalDate, imap.FetchRFC822Size, imap.FetchEnvelope})
@@ -751,6 +751,10 @@ func (m *imapMailbox) UpdateMessagesFlags(uid bool, seqset *imap.SeqSet, op imap
 		return err
 	}
 
+	// 记录首个持久化错误：SQLite 忙/锁等瞬时失败必须让客户端感知
+	// （返回 NO 触发重试），否则已读/星标会静默丢失。
+	var firstErr error
+
 	for i, dbMsg := range dbMessages {
 		var match bool
 		if uid {
@@ -770,9 +774,15 @@ func (m *imapMailbox) UpdateMessagesFlags(uid bool, seqset *imap.SeqSet, op imap
 		applyFlag := func(flag string, enabled bool) {
 			switch flag {
 			case "\\Seen":
-				_ = m.stores.Mails.MarkReadState(dbMsg.ID, enabled)
+				if err := m.stores.Mails.MarkReadState(dbMsg.ID, enabled); err != nil && firstErr == nil {
+					log.Printf("IMAP: mark read state for msg %d failed: %v", dbMsg.ID, err)
+					firstErr = err
+				}
 			case "\\Flagged":
-				_ = m.stores.Mails.MarkFlagged(dbMsg.ID, enabled)
+				if err := m.stores.Mails.MarkFlagged(dbMsg.ID, enabled); err != nil && firstErr == nil {
+					log.Printf("IMAP: mark flagged for msg %d failed: %v", dbMsg.ID, err)
+					firstErr = err
+				}
 			case "\\Deleted":
 				if enabled {
 					m.deleted[dbMsg.ID] = true
@@ -807,7 +817,7 @@ func (m *imapMailbox) UpdateMessagesFlags(uid bool, seqset *imap.SeqSet, op imap
 		pushUpdate(m.user.updates, buildFlagsUpdate(m.stores, m.user.email, m.name, fresh, deleted))
 	}
 
-	return nil
+	return firstErr
 }
 
 // CopyMessages copies messages to another mailbox.

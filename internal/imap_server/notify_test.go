@@ -36,8 +36,8 @@ func TestPushNewMessage(t *testing.T) {
 	}
 	email := "alice@example.com"
 
-	// 已有一封旧邮件，新邮件应为 INBOX 第 2 封
-	old := &db.Message{UserID: user.ID, Folder: "INBOX", FromAddr: "x@y", Subject: "old", Date: time.Now()}
+	// 已有一封旧邮件（日期更早）；规范排序最新在前，新邮件应为 INBOX 第 1 封
+	old := &db.Message{UserID: user.ID, Folder: "INBOX", FromAddr: "x@y", Subject: "old", Date: time.Now().Add(-time.Hour)}
 	if err := stores.Mails.Create(old); err != nil {
 		t.Fatalf("create old message: %v", err)
 	}
@@ -87,8 +87,8 @@ func TestPushNewMessage(t *testing.T) {
 			if mu.Message.Uid != uint32(inboxMsg.ID) {
 				t.Fatalf("backend %d: uid = %d, want %d", i, mu.Message.Uid, inboxMsg.ID)
 			}
-			if mu.Message.SeqNum != 2 {
-				t.Fatalf("backend %d: seq = %d, want 2", i, mu.Message.SeqNum)
+			if mu.Message.SeqNum != 1 {
+				t.Fatalf("backend %d: seq = %d, want 1", i, mu.Message.SeqNum)
 			}
 			if mu.Message.Envelope == nil || mu.Message.Envelope.Subject != "新邮件" {
 				t.Fatalf("backend %d: envelope missing subject", i)

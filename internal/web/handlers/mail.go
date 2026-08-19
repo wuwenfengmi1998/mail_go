@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"path/filepath"
@@ -132,7 +133,9 @@ func (h *MailHandler) View(c *gin.Context) {
 
 	// Auto mark as read
 	if !msg.IsRead {
-		_ = h.stores.Mails.MarkRead(uint(id))
+		if err := h.stores.Mails.MarkRead(uint(id)); err != nil {
+			log.Printf("web: 标记已读失败 msg=%d: %v", id, err)
+		}
 		msg.IsRead = true
 	}
 
@@ -637,7 +640,9 @@ func (h *MailHandler) Delete(c *gin.Context) {
 		_ = h.storage.Delete(att.FilePath)
 		_ = h.stores.Users.UpdateUsedBytes(userID, -att.FileSize)
 	}
-	_ = h.stores.Attachments.DeleteByMessage(uint(id))
+	if err := h.stores.Attachments.DeleteByMessage(uint(id)); err != nil {
+		log.Printf("web: 删除附件记录失败 msg=%d: %v", id, err)
+	}
 
 	// 删除前计算消息在所属文件夹中的序号（用于 Expunge 推送）
 	var seq uint32
@@ -649,7 +654,9 @@ func (h *MailHandler) Delete(c *gin.Context) {
 			}
 		}
 	}
-	_ = h.stores.Mails.Delete(uint(id))
+	if err := h.stores.Mails.Delete(uint(id)); err != nil {
+		log.Printf("web: 删除邮件失败 msg=%d: %v", id, err)
+	}
 
 	// 删除 → 推送给该用户的其他 IMAP 客户端
 	if h.pusher != nil && seq > 0 {

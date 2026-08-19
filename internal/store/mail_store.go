@@ -118,11 +118,14 @@ func (s *mailStoreGorm) CountUnread(userID uint, folder string) (int64, error) {
 }
 
 // ListAllByUserAndFolder retrieves all messages for a user in a folder without pagination.
-// Messages are ordered by ID ascending so that sequence numbers are stable.
+// 按 date DESC, id DESC 排序（最新在前）：与主流邮件客户端（Thunderbird、
+// 手机客户端等）默认视图一致，客户端自行按日期编号的 seq 式 STORE 不会
+// 错位标错邮件。所有 IMAP 序号相关路径（Status/ListMessages/推送/seqOf）
+// 共用本排序，保证序号全链路一致。
 func (s *mailStoreGorm) ListAllByUserAndFolder(userID uint, folder string) ([]db.Message, error) {
 	var messages []db.Message
 	if err := s.db.Where("user_id = ? AND folder = ?", userID, folder).
-		Order("id ASC").Find(&messages).Error; err != nil {
+		Order("date DESC, id DESC").Find(&messages).Error; err != nil {
 		return nil, err
 	}
 	return messages, nil
