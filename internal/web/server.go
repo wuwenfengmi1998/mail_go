@@ -14,8 +14,10 @@ import (
 	"unicode/utf8"
 
 	"mail_go/config"
+	"mail_go/internal/connhub"
 	"mail_go/internal/mailutil"
 	"mail_go/internal/outbound"
+	"mail_go/internal/smtp_server"
 	"mail_go/internal/storage"
 	"mail_go/internal/store"
 	"mail_go/internal/web/handlers"
@@ -51,17 +53,22 @@ type WebServer struct {
 	banCfg       config.BanConfig
 	caddyDataDir string
 	outbound     *outbound.Manager
+	hub          *connhub.Hub
+	// notify 本地投递成功通知（IMAP 新邮件推送），可空
+	notify smtp_server.NewMailNotify
 }
 
 // templateFuncs returns custom template functions for rendering.
 func templateFuncs() template.FuncMap {
 	return template.FuncMap{
-		"add":     func(a, b int) int { return a + b },
-		"sub":     func(a, b int) int { return a - b },
-		"mul":     func(a, b int) int { return a * b },
-		"div":     func(a, b int64) int64 { return a / b },
-		"mod":     func(a, b int) int { return a % b },
-		"ceilDiv": func(a, b int) int { return int(math.Ceil(float64(a) / float64(b))) },
+		"add": func(a, b int) int { return a + b },
+		"sub": func(a, b int) int { return a - b },
+		"mul": func(a, b int) int { return a * b },
+		"div": func(a, b int64) int64 { return a / b },
+		// durationSeconds 将 time.Duration 转为整秒（模板中无法做类型转换）。
+		"durationSeconds": func(d time.Duration) int64 { return int64(d / time.Second) },
+		"mod":             func(a, b int) int { return a % b },
+		"ceilDiv":         func(a, b int) int { return int(math.Ceil(float64(a) / float64(b))) },
 		"seq": func(n int) []int {
 			result := make([]int, n)
 			for i := 0; i < n; i++ {
@@ -172,7 +179,7 @@ func avatarStyle(s string) string {
 
 // NewWebServer creates a new WebServer, initializes the Gin engine,
 // configures sessions, middleware, and registers all routes.
-func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, storageCfg config.StorageConfig, authCfg config.AuthConfig, banCfg config.BanConfig, caddyCfg config.CaddyConfig, ob *outbound.Manager) (*WebServer, error) {
+func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, storageCfg config.StorageConfig, authCfg config.AuthConfig, banCfg config.BanConfig, caddyCfg config.CaddyConfig, ob *outbound.Manager, hub *connhub.Hub, notify smtp_server.NewMailNotify) (*WebServer, error) {
 	if err := config.ValidateSecretKey(cfg.SecretKey); err != nil {
 		return nil, err
 	}
@@ -218,6 +225,8 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 		banCfg:       banCfg,
 		caddyDataDir: caddyCfg.DataDir,
 		outbound:     ob,
+		hub:          hub,
+		notify:       notify,
 	}
 
 	ws.registerRoutes()
@@ -227,8 +236,8 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 // registerRoutes sets up all HTTP routes with their handlers and middleware.
 func (ws *WebServer) registerRoutes() {
 	authHandler := handlers.NewAuthHandler(ws.stores, ws.authCfg, ws.banCfg)
-	mailHandler := handlers.NewMailHandler(ws.stores, ws.storage, ws.outbound)
-	adminHandler := handlers.NewAdminHandler(ws.stores, ws.storage, filepath.Join(ws.storageCfg.BaseDir, "tls", "domains"), ws.caddyDataDir, ws.outbound, ws.cfg.ProtocolLogKeepDays)
+	mailHandler := handlers.NewMailHandler(ws.stores, ws.storage, ws.outbound, ws.notify)
+	adminHandler := handlers.NewAdminHandler(ws.stores, ws.storage, filepath.Join(ws.storageCfg.BaseDir, "tls", "domains"), ws.caddyDataDir, ws.outbound, ws.cfg.ProtocolLogKeepDays, ws.hub)
 
 	// Apply BanMiddleware globally before public routes
 	ws.engine.Use(middleware.BanMiddleware(ws.stores))
@@ -298,6 +307,7 @@ func (ws *WebServer) registerRoutes() {
 		admin.POST("/bans/:id/unban", adminHandler.UnbanIP)
 		admin.GET("/protocol-logs", adminHandler.ListProtocolLogs)
 		admin.POST("/protocol-logs/cleanup", adminHandler.CleanupProtocolLogs)
+		admin.GET("/connections", adminHandler.ListConnections)
 	}
 }
 

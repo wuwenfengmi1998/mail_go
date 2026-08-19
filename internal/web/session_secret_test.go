@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"mail_go/config"
+	"mail_go/internal/connhub"
 	"mail_go/internal/db"
 	"mail_go/internal/storage"
 	"mail_go/internal/store"
@@ -74,7 +75,7 @@ func newTestWebServer(t *testing.T, secretKey string) (*WebServer, *store.Stores
 	cfg := config.WebConfig{Addr: "127.0.0.1:0", SecretKey: secretKey, CookieSecure: true}
 
 	ws, err := NewWebServer(cfg, stores, attStorage, config.StorageConfig{BaseDir: baseDir},
-		config.AuthConfig{}, config.BanConfig{MaxFailAttempts: 100}, config.CaddyConfig{}, nil)
+		config.AuthConfig{}, config.BanConfig{MaxFailAttempts: 100}, config.CaddyConfig{}, nil, connhub.New(), nil)
 	if err != nil {
 		t.Fatalf("NewWebServer: %v", err)
 	}
@@ -188,7 +189,7 @@ func TestNewWebServerRejectsBadSecretKeys(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := NewWebServer(config.WebConfig{Addr: "127.0.0.1:0", SecretKey: tc.key},
 				stores, attStorage, config.StorageConfig{BaseDir: baseDir},
-				config.AuthConfig{}, config.BanConfig{}, config.CaddyConfig{}, nil)
+				config.AuthConfig{}, config.BanConfig{}, config.CaddyConfig{}, nil, connhub.New(), nil)
 			if err == nil {
 				t.Fatalf("NewWebServer should reject secret key %q", tc.key)
 			}

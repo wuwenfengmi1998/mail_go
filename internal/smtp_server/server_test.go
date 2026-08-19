@@ -86,7 +86,7 @@ func TestSaveMessagePersistsAttachments(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 
-	if err := sess.saveMessage(user.ID, "INBOX", parsed, data, false); err != nil {
+	if _, err := sess.saveMessage(user.ID, "INBOX", parsed, data, false); err != nil {
 		t.Fatalf("saveMessage: %v", err)
 	}
 

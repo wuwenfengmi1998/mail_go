@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"mail_go/config"
+	"mail_go/internal/connhub"
 	"mail_go/internal/db"
 	"mail_go/internal/mailutil"
 	"mail_go/internal/outbound"
@@ -32,6 +33,10 @@ const (
 	smtpModeImplicitTLS
 )
 
+// NewMailNotify 是本地新邮件投递完成后的通知回调（IMAP 推送用），
+// userEmail 为收件人完整邮箱，msg 为已入库的邮件。
+type NewMailNotify func(userEmail string, msg *db.Message)
+
 // SMTPServer wraps go-smtp servers and provides local mail delivery.
 type SMTPServer struct {
 	stores    *store.Stores
@@ -40,12 +45,14 @@ type SMTPServer struct {
 	cfg       config.SMTPConfig
 	banCfg    config.BanConfig
 	tlsLoader *tlsutil.Loader
+	hub       *connhub.Hub
+	notify    NewMailNotify // 本地投递成功通知（IMAP 新邮件推送），可空
 }
 
 // NewSMTPServer creates a new SMTP server instance. tlsLoader may be nil
 // when TLS is not configured.
-func NewSMTPServer(cfg config.SMTPConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, ob *outbound.Manager, tlsLoader *tlsutil.Loader, banCfg config.BanConfig) *SMTPServer {
-	return &SMTPServer{stores: stores, storage: attStorage, outbound: ob, cfg: cfg, banCfg: banCfg, tlsLoader: tlsLoader}
+func NewSMTPServer(cfg config.SMTPConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, ob *outbound.Manager, tlsLoader *tlsutil.Loader, banCfg config.BanConfig, hub *connhub.Hub, notify NewMailNotify) *SMTPServer {
+	return &SMTPServer{stores: stores, storage: attStorage, outbound: ob, cfg: cfg, banCfg: banCfg, tlsLoader: tlsLoader, hub: hub, notify: notify}
 }
 
 func (s *SMTPServer) tlsConfig() (*tls.Config, error) {
@@ -110,14 +117,23 @@ type smtpBackend struct {
 
 // NewSession creates a new SMTP session for the incoming connection.
 func (be *smtpBackend) NewSession(c *smtp.Conn) (smtp.Session, error) {
+	clientIP := store.ClientIPFromAddr(c.Conn().RemoteAddr())
+	conn := be.server.hub.Register("smtp", clientIP, be.server.sessionPort(be.mode), be.server.tlsActive(c))
 	return &smtpSession{
 		backend:   be,
 		mode:      be.mode,
 		rcpts:     make([]string, 0),
-		clientIP:  store.ClientIPFromAddr(c.Conn().RemoteAddr()),
+		clientIP:  clientIP,
 		startedAt: time.Now(),
 		port:      be.server.sessionPort(be.mode),
+		conn:      conn,
 	}, nil
+}
+
+// tlsActive 判断当前连接是否处于 TLS 加密状态（implicit TLS 或 STARTTLS）。
+func (s *SMTPServer) tlsActive(c *smtp.Conn) bool {
+	_, ok := c.TLSConnectionState()
+	return ok
 }
 
 // sessionPort 返回该会话监听的端口号（区分明文/TLS/提交端口），解析失败返回 0。
@@ -163,6 +179,9 @@ type smtpSession struct {
 	failReason   string // 首个失败原因
 	msgCount     int    // 成功处理的邮件数（本地投递 + 外发队列）
 	detailParts  []string
+
+	// 连接追踪
+	conn *connhub.Conn
 }
 
 // AuthMechanisms returns supported SMTP AUTH mechanisms.
@@ -191,6 +210,7 @@ func (s *smtpSession) Auth(mech string) (sasl.Server, error) {
 	return sasl.NewPlainServer(func(identity, username, password string) error {
 		s.authTried = true
 		s.authUsername = username
+		s.conn.Touch()
 		// 已封禁 IP 一律拒绝认证（防协议层暴力破解）
 		if banned, _ := s.backend.server.stores.Bans.IsBanned(s.clientIP); banned {
 			s.recordFail("IP已被封禁")
@@ -227,6 +247,9 @@ func (s *smtpSession) Auth(mech string) (sasl.Server, error) {
 		s.userID = user.ID
 		s.user = user
 		s.email = user.Username + "@" + domainName
+		if s.conn != nil {
+			s.conn.SetUser(s.email)
+		}
 		return nil
 	}), nil
 }
@@ -293,6 +316,7 @@ func (s *smtpSession) localUserByEmail(email string) (*db.User, error) {
 // External recipients (authenticated sessions only) are queued for
 // outbound delivery.
 func (s *smtpSession) Data(r io.Reader) error {
+	s.conn.Touch()
 	if len(s.rcpts) == 0 {
 		s.recordFail("未指定收件人")
 		return fmt.Errorf("no accepted recipients")
@@ -318,12 +342,17 @@ func (s *smtpSession) Data(r io.Reader) error {
 			log.Printf("SMTP: recipient not found %s, skipping", rcpt)
 			continue
 		}
-		if err := s.saveMessage(user.ID, "INBOX", parsed, data, false); err != nil {
+		msg, err := s.saveMessage(user.ID, "INBOX", parsed, data, false)
+		if err != nil {
 			log.Printf("SMTP: failed to create message for %s: %v", rcpt, err)
 			continue
 		}
 		log.Printf("SMTP: message delivered to %s", rcpt)
 		localDelivered++
+		// 本地投递成功 → IMAP 新邮件推送（IDLE 客户端实时收到通知）
+		if notify := s.backend.server.notify; notify != nil && msg != nil {
+			notify(user.Username+"@"+user.Domain.Name, msg)
+		}
 	}
 	s.msgCount += localDelivered
 
@@ -352,7 +381,7 @@ func (s *smtpSession) Data(r io.Reader) error {
 	s.msgCount += externalQueued
 
 	if s.authenticated && s.userID != 0 && s.mode != smtpModeInbound {
-		if err := s.saveMessage(s.userID, "Sent", parsed, data, true); err != nil {
+		if _, err := s.saveMessage(s.userID, "Sent", parsed, data, true); err != nil {
 			log.Printf("SMTP: failed to save sent copy for %s: %v", s.email, err)
 		}
 	}
@@ -453,7 +482,7 @@ func parseSMTPMessage(data []byte) (*parsedSMTPMessage, error) {
 	return msg, nil
 }
 
-func (s *smtpSession) saveMessage(userID uint, folder string, parsed *parsedSMTPMessage, data []byte, read bool) error {
+func (s *smtpSession) saveMessage(userID uint, folder string, parsed *parsedSMTPMessage, data []byte, read bool) (*db.Message, error) {
 	msg := &db.Message{
 		UserID:    userID,
 		MessageID: parsed.messageID,
@@ -470,7 +499,7 @@ func (s *smtpSession) saveMessage(userID uint, folder string, parsed *parsedSMTP
 		Date:      parsed.date,
 	}
 	if err := s.backend.server.stores.Mails.Create(msg); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Persist attachments to disk and link them to the message so that the
@@ -494,7 +523,7 @@ func (s *smtpSession) saveMessage(userID uint, folder string, parsed *parsedSMTP
 		}
 		_ = s.backend.server.stores.Users.UpdateUsedBytes(userID, rec.FileSize)
 	}
-	return nil
+	return msg, nil
 }
 
 // Reset clears the session state for the next message on the same connection.
@@ -508,6 +537,9 @@ func (s *smtpSession) Reset() {
 // Logout is called when the SMTP connection is closed.
 func (s *smtpSession) Logout() error {
 	s.writeProtocolLog()
+	if s.conn != nil {
+		s.conn.Close()
+	}
 	return nil
 }
 

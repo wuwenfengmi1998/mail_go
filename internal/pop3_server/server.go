@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"mail_go/config"
+	"mail_go/internal/connhub"
 	"mail_go/internal/db"
 	"mail_go/internal/store"
 	"mail_go/internal/tlsutil"
@@ -24,13 +25,14 @@ type POP3Server struct {
 	cfg       config.POP3Config
 	banCfg    config.BanConfig
 	tlsLoader *tlsutil.Loader
+	hub       *connhub.Hub
 	wg        sync.WaitGroup
 }
 
 // NewPOP3Server creates a new POP3 server instance. tlsLoader may be nil
 // when TLS is not configured.
-func NewPOP3Server(cfg config.POP3Config, stores *store.Stores, tlsLoader *tlsutil.Loader, banCfg config.BanConfig) *POP3Server {
-	return &POP3Server{stores: stores, cfg: cfg, banCfg: banCfg, tlsLoader: tlsLoader}
+func NewPOP3Server(cfg config.POP3Config, stores *store.Stores, tlsLoader *tlsutil.Loader, banCfg config.BanConfig, hub *connhub.Hub) *POP3Server {
+	return &POP3Server{stores: stores, cfg: cfg, banCfg: banCfg, tlsLoader: tlsLoader, hub: hub}
 }
 
 func (s *POP3Server) tlsConfig() (*tls.Config, error) {
@@ -133,6 +135,9 @@ func (s *POP3Server) handleConn(conn net.Conn, port int) {
 		return
 	}
 
+	// 连接追踪：注册到当前连接中心，连接结束时注销
+	activeConn := s.hub.Register("pop3", clientIP, port, false)
+
 	// 会话状态（供协议日志汇总）
 	var (
 		authUser       *db.User
@@ -146,6 +151,12 @@ func (s *POP3Server) handleConn(conn net.Conn, port int) {
 	var messages []pop3Message
 	var deleted map[int]bool
 	tlsActive := false
+
+	defer func() {
+		if activeConn != nil {
+			activeConn.Close()
+		}
+	}()
 
 	sendResponse(conn, "+OK MailGo POP3 server ready")
 
@@ -163,6 +174,7 @@ func (s *POP3Server) handleConn(conn net.Conn, port int) {
 		parts := strings.SplitN(line, " ", 2)
 		cmd := strings.ToUpper(parts[0])
 		commandCount[cmd]++
+		activeConn.Touch()
 		arg := ""
 		if len(parts) > 1 {
 			arg = strings.TrimSpace(parts[1])
@@ -186,6 +198,7 @@ func (s *POP3Server) handleConn(conn net.Conn, port int) {
 				}
 			} else {
 				authFailReason = ""
+				activeConn.SetUser(authUsername)
 			}
 		case "STAT":
 			s.handleSTAT(conn, messages, deleted)
@@ -233,6 +246,7 @@ func (s *POP3Server) handleConn(conn net.Conn, port int) {
 			conn = tlsConn
 			reader = bufio.NewReader(conn)
 			tlsActive = true
+			activeConn.SetTLS(true)
 		case "TOP":
 			s.handleTOP(conn, arg, messages, deleted)
 		case "UIDL":

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"mail_go/config"
+	"mail_go/internal/connhub"
 	"mail_go/internal/db"
 	"mail_go/internal/mailutil"
 	"mail_go/internal/store"
@@ -24,11 +25,62 @@ import (
 
 // ---------- imapBackend ----------
 
-// imapBackend implements backend.Backend.
+// imapBackend implements backend.Backend and backend.BackendUpdater.
 type imapBackend struct {
 	stores *store.Stores
 	banCfg config.BanConfig
 	port   int
+	hub    *connhub.Hub
+
+	// updates 承载新邮件等后端更新，由 go-imap 服务器广播给相关客户端。
+	updates chan backend.Update
+}
+
+// Updates 实现 backend.BackendUpdater：新邮件推送通道（广播按用户名与
+// 邮箱过滤，只送达已选中对应邮箱的客户端）。
+func (b *imapBackend) Updates() <-chan backend.Update {
+	return b.updates
+}
+
+// buildNewMessageUpdate 为一条新投递到 INBOX 的邮件构造 IMAP 更新。
+// seq 取该邮件在 INBOX 中的序号（通知时机在入库之后，取当前 INBOX 长度）。
+func buildNewMessageUpdate(stores *store.Stores, userEmail string, msg *db.Message) *backend.MessageUpdate {
+	if stores == nil || msg == nil || userEmail == "" {
+		return nil
+	}
+	seq := uint32(1)
+	if msgs, err := stores.Mails.ListAllByUserAndFolder(msg.UserID, "INBOX"); err == nil {
+		seq = uint32(len(msgs))
+	}
+
+	flags := make([]string, 0, 2)
+	if msg.IsRead {
+		flags = append(flags, "\\Seen")
+	}
+	if msg.IsFlagged {
+		flags = append(flags, "\\Flagged")
+	}
+
+	imapMsg := imap.NewMessage(seq, []imap.FetchItem{imap.FetchUid, imap.FetchFlags, imap.FetchInternalDate, imap.FetchRFC822Size, imap.FetchEnvelope})
+	imapMsg.Uid = uint32(msg.ID)
+	imapMsg.Flags = flags
+	imapMsg.InternalDate = msg.Date
+	imapMsg.Size = uint32(len(msg.RawData))
+	imapMsg.Envelope = &imap.Envelope{
+		Date:      msg.Date,
+		Subject:   msg.Subject,
+		From:      parseAddressList(msg.FromAddr),
+		Sender:    parseAddressList(msg.FromAddr),
+		ReplyTo:   parseAddressList(msg.FromAddr),
+		To:        parseAddressList(msg.ToAddr),
+		Cc:        parseAddressList(msg.CcAddr),
+		MessageId: msg.MessageID,
+	}
+
+	return &backend.MessageUpdate{
+		Update:  backend.NewUpdate(userEmail, "INBOX"),
+		Message: imapMsg,
+	}
 }
 
 // Login authenticates a user by email and password.
@@ -58,6 +110,12 @@ func (b *imapBackend) Login(connInfo *imap.ConnInfo, username, password string) 
 
 	logID := b.recordLogin(clientIP, username, true, "", "LOGIN 成功", 0, now)
 
+	// 连接追踪：注册到当前连接中心，Logout 时注销
+	conn := b.hub.Register("imap", clientIP, b.port, connInfo.TLS != nil)
+	if conn != nil {
+		conn.SetUser(email)
+	}
+
 	return &imapUser{
 		stores:    b.stores,
 		id:        user.ID,
@@ -65,6 +123,7 @@ func (b *imapBackend) Login(connInfo *imap.ConnInfo, username, password string) 
 		logID:     logID,
 		clientIP:  clientIP,
 		startedAt: now,
+		conn:      conn,
 	}, nil
 }
 
@@ -98,6 +157,7 @@ type imapUser struct {
 	logID     uint
 	clientIP  string
 	startedAt time.Time
+	conn      *connhub.Conn
 }
 
 // Username returns the user's email address.
@@ -186,6 +246,7 @@ func (u *imapUser) Logout() error {
 	if err := u.stores.ProtocolLogs.UpdateDuration(u.logID, durationMs); err != nil {
 		log.Printf("IMAP: 更新协议日志失败: %v", err)
 	}
+	u.conn.Close()
 	return nil
 }
 

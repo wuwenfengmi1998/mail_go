@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"mail_go/internal/caddycert"
+	"mail_go/internal/connhub"
 	"mail_go/internal/db"
 	"mail_go/internal/dkim"
 	"mail_go/internal/outbound"
@@ -32,12 +33,38 @@ type AdminHandler struct {
 	outbound     *outbound.Manager
 	// protocolLogKeepDays SMTP/IMAP/POP3 协议日志保留天数（配置文件 [web]）
 	protocolLogKeepDays int
+	// hub 当前协议连接注册中心（「当前连接」页）
+	hub *connhub.Hub
 }
 
 // NewAdminHandler creates a new AdminHandler with the given stores, attachment
 // storage, TLS directory, Caddy data directory and outbound delivery manager.
-func NewAdminHandler(stores *store.Stores, attStorage *storage.AttachmentStorage, tlsDir string, caddyDataDir string, ob *outbound.Manager, protocolLogKeepDays int) *AdminHandler {
-	return &AdminHandler{stores: stores, storage: attStorage, tlsDir: tlsDir, caddyDataDir: caddyDataDir, outbound: ob, protocolLogKeepDays: protocolLogKeepDays}
+func NewAdminHandler(stores *store.Stores, attStorage *storage.AttachmentStorage, tlsDir string, caddyDataDir string, ob *outbound.Manager, protocolLogKeepDays int, hub *connhub.Hub) *AdminHandler {
+	return &AdminHandler{stores: stores, storage: attStorage, tlsDir: tlsDir, caddyDataDir: caddyDataDir, outbound: ob, protocolLogKeepDays: protocolLogKeepDays, hub: hub}
+}
+
+// ListConnections 渲染当前协议连接页面（SMTP/IMAP/POP3 实时连接）。
+func (h *AdminHandler) ListConnections(c *gin.Context) {
+	conns := h.hub.List()
+	counts := h.hub.Counts()
+
+	total := len(conns)
+	smtpCount := counts["smtp"]
+	imapCount := counts["imap"]
+	pop3Count := counts["pop3"]
+
+	currentUser, _ := c.Get("currentUser")
+
+	c.HTML(200, "admin_connections", gin.H{
+		"currentUser":  currentUser,
+		"conns":        conns,
+		"total":        total,
+		"smtpCount":    smtpCount,
+		"imapCount":    imapCount,
+		"pop3Count":    pop3Count,
+		"now":          time.Now(),
+		"activeFolder": "connections",
+	})
 }
 
 // Dashboard renders the admin dashboard with summary statistics.

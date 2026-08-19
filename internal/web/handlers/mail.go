@@ -13,6 +13,7 @@ import (
 
 	"mail_go/internal/db"
 	"mail_go/internal/outbound"
+	"mail_go/internal/smtp_server"
 	"mail_go/internal/storage"
 	"mail_go/internal/store"
 
@@ -49,12 +50,14 @@ type MailHandler struct {
 	stores   *store.Stores
 	storage  *storage.AttachmentStorage
 	outbound *outbound.Manager
+	// notify 本地投递成功通知（IMAP 新邮件推送），可空
+	notify smtp_server.NewMailNotify
 }
 
 // NewMailHandler creates a new MailHandler with the given stores, attachment
 // storage and outbound delivery manager.
-func NewMailHandler(stores *store.Stores, attStorage *storage.AttachmentStorage, ob *outbound.Manager) *MailHandler {
-	return &MailHandler{stores: stores, storage: attStorage, outbound: ob}
+func NewMailHandler(stores *store.Stores, attStorage *storage.AttachmentStorage, ob *outbound.Manager, notify smtp_server.NewMailNotify) *MailHandler {
+	return &MailHandler{stores: stores, storage: attStorage, outbound: ob, notify: notify}
 }
 
 // folderCounts returns sidebar badge counts for the current user.
@@ -381,6 +384,10 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 				"quotaBytes":   currentUser.QuotaBytes,
 			})
 			return
+		}
+		// 本地投递成功 → IMAP 新邮件推送（IDLE 客户端实时收到通知）
+		if h.notify != nil {
+			h.notify(rcptUser.Username+"@"+rcptUser.Domain.Name, inboxMsg)
 		}
 	}
 

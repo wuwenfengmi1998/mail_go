@@ -101,6 +101,24 @@ func TestRenderAllPages(t *testing.T) {
 			},
 			"keepDays": 30,
 		}},
+		{"admin_connections", ginH{
+			"currentUser": user, "activeFolder": "connections",
+			"conns": []struct {
+				ID         uint64
+				Protocol   string
+				IP         string
+				Port       int
+				User       string
+				TLS        bool
+				Connected  time.Time
+				LastActive time.Time
+			}{
+				{ID: 1, Protocol: "smtp", IP: "203.0.113.7", Port: 25, TLS: true, Connected: now.Add(-2 * time.Minute), LastActive: now},
+				{ID: 2, Protocol: "imap", IP: "203.0.113.9", Port: 993, User: "admin", TLS: true, Connected: now.Add(-30 * time.Minute), LastActive: now.Add(-10 * time.Second)},
+				{ID: 3, Protocol: "pop3", IP: "10.0.0.2", Port: 110, User: "alice", TLS: false, Connected: now.Add(-time.Minute), LastActive: now.Add(-30 * time.Second)},
+			},
+			"total": 3, "smtpCount": 1, "imapCount": 1, "pop3Count": 1, "now": now,
+		}},
 	}
 
 	outDir := os.Getenv("MAILGO_PREVIEW_DIR")

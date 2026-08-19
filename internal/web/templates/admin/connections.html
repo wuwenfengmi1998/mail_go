@@ -1,0 +1,94 @@
+{{define "admin_connections"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>当前连接 - MailGo</title>
+    <meta http-equiv="refresh" content="5">
+    {{template "styles" .}}
+</head>
+<body>
+    {{template "navbar" .}}
+    <div class="container">
+        <div class="clearfix">
+            <div class="sidebar">
+                <a href="/inbox">返回邮箱</a>
+                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>控制面板</a>
+                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>域名管理</a>
+                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>用户管理</a>
+                <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>所有邮件</a>
+                <a href="/admin/outbound" {{if eq .activeFolder "outbound"}}class="active"{{end}}>外发队列</a>
+                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>协议日志</a>
+                <a href="/admin/connections" {{if eq .activeFolder "connections"}}class="active"{{end}}>当前连接</a>
+                <a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>IP黑名单</a>
+            </div>
+            <div class="content">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                    <h2>当前连接（SMTP / IMAP / POP3）</h2>
+                    <span style="color:#7f8c8d;font-size:13px;">每 5 秒自动刷新</span>
+                </div>
+
+                <div style="margin-bottom:24px;">
+                    <div class="stat-card">
+                        <h3>{{.total}}</h3>
+                        <p>当前连接总数</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>{{.smtpCount}}</h3>
+                        <p>SMTP</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>{{.imapCount}}</h3>
+                        <p>IMAP</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>{{.pop3Count}}</h3>
+                        <p>POP3</p>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>协议</th>
+                                <th>来源 IP</th>
+                                <th>端口</th>
+                                <th>用户名</th>
+                                <th>TLS</th>
+                                <th>连接时间</th>
+                                <th>时长</th>
+                                <th>最后活跃</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{range .conns}}
+                            <tr>
+                                <td>{{.ID}}</td>
+                                <td>
+                                    {{if eq .Protocol "smtp"}}<span class="badge" style="background:#3498db;color:#fff;">SMTP</span>
+                                    {{else if eq .Protocol "imap"}}<span class="badge" style="background:#9b59b6;color:#fff;">IMAP</span>
+                                    {{else}}<span class="badge" style="background:#16a085;color:#fff;">POP3</span>{{end}}
+                                </td>
+                                <td>{{.IP}}</td>
+                                <td>{{.Port}}</td>
+                                <td>{{if .User}}{{.User}}{{else}}—{{end}}</td>
+                                <td>{{if .TLS}}<span class="badge" style="background:#27ae60;color:#fff;">TLS</span>{{else}}<span class="badge" style="background:#95a5a6;color:#fff;">明文</span>{{end}}</td>
+                                <td>{{.Connected.Format "2006-01-02 15:04:05"}}</td>
+                                <td>{{durationSeconds ($.now.Sub .Connected)}}s</td>
+                                <td>{{.LastActive.Format "2006-01-02 15:04:05"}}</td>
+                            </tr>
+                            {{else}}
+                            <tr><td colspan="9" style="text-align:center;color:#7f8c8d;">当前没有活动连接</td></tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+{{end}}
