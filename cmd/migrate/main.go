@@ -183,6 +183,21 @@ func main() {
 	var stateCount int64
 	sdb.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='mailbox_states'").Scan(&stateCount)
 	if stateCount > 0 {
+		// 目标库若没有该表（上游模型未含 MailboxState 时 AutoMigrate 不会建），先建表
+		var tcnt int64
+		mdb.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'mailbox_states'").Scan(&tcnt)
+		if tcnt == 0 {
+			if err := mdb.Exec(`CREATE TABLE mailbox_states (
+				user_id bigint unsigned NOT NULL,
+				folder varchar(64) NOT NULL,
+				uid_validity bigint unsigned NOT NULL,
+				created_at datetime(3) NULL,
+				updated_at datetime(3) NULL,
+				PRIMARY KEY (user_id, folder))`).Error; err != nil {
+				log.Fatalf("建 mailbox_states 表: %v", err)
+			}
+			log.Println("mailbox_states: 目标库已建表")
+		}
 		srows, err := sdb.Raw("SELECT user_id, folder, uid_validity, created_at, updated_at FROM mailbox_states ORDER BY user_id, folder").Rows()
 		if err != nil {
 			log.Fatalf("读 mailbox_states: %v", err)
