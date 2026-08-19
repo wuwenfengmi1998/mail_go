@@ -461,6 +461,15 @@ func (m *imapMailbox) buildIMAPMessage(dbMsg *db.Message, seqNum uint32, items [
 			if err == nil {
 				imapMsg.BodyStructure, _ = backendutil.FetchBodyStructure(hdr, body, item == imap.FetchBodyStructure)
 			}
+			// 防御：FetchBodyStructure 对部分合法/畸形 MIME 会失败并返回
+			// nil（典型：message/rfc822 附件为 base64 编码时库内不解码
+			// 直接按嵌套消息解析头；或 multipart 边界截断）。BodyStructure
+			// 为 nil 时 go-imap 格式化 FETCH 响应会在 send() 协程 panic
+			// （nil 指针解引用），连接中断导致客户端只收到部分邮件甚至
+			// 一直卡在同步。解析失败时降级为 text/plain 单段结构。
+			if imapMsg.BodyStructure == nil {
+				imapMsg.BodyStructure = fallbackBodyStructure(rawMsg)
+			}
 		default:
 			section, err := imap.ParseBodySectionName(item)
 			if err != nil {
@@ -471,11 +480,31 @@ func (m *imapMailbox) buildIMAPMessage(dbMsg *db.Message, seqNum uint32, items [
 				return nil, err
 			}
 			literal, _ := backendutil.FetchBodySection(hdr, body, section)
-			imapMsg.Body[section] = literal
+			if literal != nil {
+				imapMsg.Body[section] = literal
+			}
 		}
 	}
 
 	return imapMsg, nil
+}
+
+// fallbackBodyStructure 构造一个 text/plain 单段 BodyStructure，用于
+// MIME 解析失败的消息（保证 FETCH BODY/BODYSTRUCTURE 不因 nil 崩溃）。
+func fallbackBodyStructure(raw []byte) *imap.BodyStructure {
+	size := uint32(len(raw))
+	lines := uint32(bytes.Count(raw, []byte{'\n'}))
+	if len(raw) > 0 && raw[len(raw)-1] != '\n' {
+		lines++
+	}
+	return &imap.BodyStructure{
+		MIMEType:    "text",
+		MIMESubType: "plain",
+		Params:      map[string]string{"charset": "utf-8"},
+		Encoding:    "8bit",
+		Size:        size,
+		Lines:       lines,
+	}
 }
 
 func messageRawData(msg *db.Message) []byte {
