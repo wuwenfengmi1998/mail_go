@@ -126,6 +126,15 @@ type OutboundConfig struct {
 	MaxPerDay      int    `toml:"max_per_day"`     // 每用户每日最大外发数，0 表示禁用外部投递
 	ConnectTimeout int    `toml:"connect_timeout"` // 连接远程 MX 超时（秒）
 
+	// Workers 并发投递 worker 数：多 goroutine 并行发送队列中的邮件。
+	// 0 或 1 表示串行（旧行为）。
+	Workers int `toml:"workers"`
+	// BatchSize 每次扫描最多取出的待投递邮件数。
+	BatchSize int `toml:"batch_size"`
+	// MaxConcurrentPerDomain 同一收件域（或中继）的最大并发连接数，
+	// 防止对单个 MX 域并发过多而被判定为滥发；0 表示不限制。
+	MaxConcurrentPerDomain int `toml:"max_concurrent_per_domain"`
+
 	// Smarthost relay: when relay_host is non-empty, all external mail is
 	// delivered through this relay instead of direct MX delivery. Useful when
 	// the server IP is listed in PBL/blocklists (residential/dynamic IPs).
@@ -230,16 +239,19 @@ func defaultConfig() *Config {
 		// Caddy: 留空则自动探测常见数据目录，无需配置
 		Caddy: CaddyConfig{},
 		Outbound: OutboundConfig{
-			PollInterval:   15, // 15 秒扫描一次队列
-			MaxAttempts:    12, // 最多尝试 12 次
-			RetryBaseMin:   5,  // 5/10/20/40/... 分钟指数退避
-			MaxRecipients:  50, // 单封最多 50 个外部收件人
-			MaxPerMin:      30, // 每用户每分钟 30 封
-			MaxPerDay:      500,
-			ConnectTimeout: 30,  // 连接远程 MX 超时 30 秒
-			RelayPort:      587, // smarthost 默认提交端口
-			RelayStartTLS:  true,
-			IPFamily:       "ipv4",
+			PollInterval:           15, // 15 秒扫描一次队列
+			MaxAttempts:            12, // 最多尝试 12 次
+			RetryBaseMin:           5,  // 5/10/20/40/... 分钟指数退避
+			MaxRecipients:          50, // 单封最多 50 个外部收件人
+			MaxPerMin:              30, // 每用户每分钟 30 封
+			MaxPerDay:              500,
+			ConnectTimeout:         30,  // 连接远程 MX 超时 30 秒
+			RelayPort:              587, // smarthost 默认提交端口
+			RelayStartTLS:          true,
+			IPFamily:               "ipv4",
+			Workers:                DefaultOutboundWorkers,
+			BatchSize:              DefaultOutboundBatchSize,
+			MaxConcurrentPerDomain: DefaultMaxConcurrentPerDomain,
 		},
 	}
 }
@@ -324,6 +336,15 @@ func mergeDefaults(cfg *Config, defaults *Config) *Config {
 	}
 	if cfg.Outbound.ConnectTimeout == 0 {
 		cfg.Outbound.ConnectTimeout = defaults.Outbound.ConnectTimeout
+	}
+	if cfg.Outbound.Workers == 0 {
+		cfg.Outbound.Workers = defaults.Outbound.Workers
+	}
+	if cfg.Outbound.BatchSize == 0 {
+		cfg.Outbound.BatchSize = defaults.Outbound.BatchSize
+	}
+	if cfg.Outbound.MaxConcurrentPerDomain == 0 {
+		cfg.Outbound.MaxConcurrentPerDomain = defaults.Outbound.MaxConcurrentPerDomain
 	}
 	if cfg.Outbound.RelayPort == 0 {
 		cfg.Outbound.RelayPort = defaults.Outbound.RelayPort

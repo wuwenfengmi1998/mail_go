@@ -16,8 +16,13 @@ import (
 )
 
 // Manager orchestrates the outbound delivery queue: enqueueing messages,
-// background delivery worker, exponential backoff retries, DKIM signing,
-// per-user rate limits and failure bounces.
+// concurrent background delivery workers, exponential backoff retries, DKIM
+// signing, per-user rate limits and failure bounces.
+//
+// 并发模型：一个 dispatcher goroutine 周期性扫描队列并原子抢占（Claim）
+// 待投递项，投递给 worker 池（默认 4 个 goroutine）并行发送；同一收件域
+// （或中继）的连接数受 max_concurrent_per_domain 限制。workers=0/1 时退
+// 化为串行投递（旧行为）。
 type Manager struct {
 	cfg      config.OutboundConfig
 	hostname string // EHLO hostname
@@ -31,7 +36,12 @@ type Manager struct {
 	wg    sync.WaitGroup
 	mu    sync.Mutex
 	lim   map[uint]*userWindow
-	batch int
+	jobs  chan *db.OutboundMessage
+	domMu sync.Mutex
+	dom   map[string]chan struct{} // 每域并发信号量
+
+	// deliver 执行单封投递，默认走 m.mailer.Deliver；测试可注入替换。
+	deliver func(from, to string, data []byte) (string, error)
 }
 
 // userWindow tracks a user's sending rate within fixed windows.
@@ -45,6 +55,14 @@ type userWindow struct {
 // NewManager creates an outbound delivery Manager.
 // hostname is the EHLO name presented to remote servers (defaults to "localhost").
 func NewManager(cfg config.OutboundConfig, hostname string, stores *store.Stores) *Manager {
+	batchSize := cfg.BatchSize
+	if batchSize <= 0 {
+		batchSize = 50
+	}
+	workers := cfg.Workers
+	if workers <= 1 {
+		workers = 1
+	}
 	m := &Manager{
 		cfg:      cfg,
 		hostname: hostname,
@@ -54,8 +72,10 @@ func NewManager(cfg config.OutboundConfig, hostname string, stores *store.Stores
 		stop:     make(chan struct{}),
 		done:     make(chan struct{}),
 		lim:      make(map[uint]*userWindow),
-		batch:    50,
+		jobs:     make(chan *db.OutboundMessage, batchSize),
+		dom:      make(map[string]chan struct{}),
 	}
+	m.deliver = m.mailer.Deliver
 	m.mailer.IPFamily = cfg.IPFamily
 	m.mailer.SourceIP = cfg.SourceIP
 	if cfg.SourceIP != "" {
@@ -73,22 +93,27 @@ func NewManager(cfg config.OutboundConfig, hostname string, stores *store.Stores
 		}
 		log.Printf("outbound: using smarthost relay %s:%d", cfg.RelayHost, cfg.RelayPort)
 	}
+	log.Printf("outbound: %d delivery workers, batch=%d, per-domain concurrency=%d",
+		workers, batchSize, cfg.MaxConcurrentPerDomain)
 	return m
 }
 
-// Start launches the background delivery worker.
+// Start launches the dispatcher and the delivery worker pool.
 func (m *Manager) Start() {
 	interval := time.Duration(m.cfg.PollInterval) * time.Second
 	if interval <= 0 {
 		interval = 15 * time.Second
 	}
 
+	// 调度者：启动时立即扫描一次（清空积压），之后按周期扫描 +
+	// 原子抢占待投递项，投递给 worker 池。
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		log.Printf("outbound: delivery worker started (interval=%s, max_attempts=%d)", interval, m.cfg.MaxAttempts)
+		log.Printf("outbound: dispatcher started (interval=%s, max_attempts=%d)", interval, m.cfg.MaxAttempts)
+		m.processDue()
 		for {
 			select {
 			case <-ticker.C:
@@ -96,14 +121,30 @@ func (m *Manager) Start() {
 			case <-m.kick:
 				m.processDue()
 			case <-m.stop:
+				close(m.jobs)
 				close(m.done)
 				return
 			}
 		}
 	}()
+
+	// Worker 池：并行投递。
+	workers := m.cfg.Workers
+	if workers <= 1 {
+		workers = 1
+	}
+	for i := 0; i < workers; i++ {
+		m.wg.Add(1)
+		go func() {
+			defer m.wg.Done()
+			for job := range m.jobs {
+				m.deliverOne(job)
+			}
+		}()
+	}
 }
 
-// Stop gracefully stops the delivery worker.
+// Stop gracefully stops the dispatcher and workers.
 func (m *Manager) Stop() {
 	m.once.Do(func() {
 		close(m.stop)
@@ -243,28 +284,77 @@ func (m *Manager) checkRateLimit(userID uint) error {
 	return nil
 }
 
-// processDue attempts delivery of all due queue items.
+// processDue scans the queue and dispatches due items to the worker pool.
+// Each item is atomically claimed (status -> sending) before dispatch so
+// that concurrent workers never deliver the same message twice. When all
+// workers are busy the dispatcher blocks here, naturally throttling claims;
+// remaining due items are picked up on the next scan.
 func (m *Manager) processDue() {
-	items, err := m.stores.Outbound.ListDue(time.Now(), m.batch)
+	batchSize := m.cfg.BatchSize
+	if batchSize <= 0 {
+		batchSize = 50
+	}
+	items, err := m.stores.Outbound.ListDue(time.Now(), batchSize)
 	if err != nil {
 		log.Printf("outbound: loading due queue failed: %v", err)
 		return
 	}
 	for i := range items {
-		m.deliverOne(&items[i])
+		claimed, err := m.stores.Outbound.Claim(items[i].ID)
+		if err != nil {
+			log.Printf("outbound: claim item %d failed: %v", items[i].ID, err)
+			continue
+		}
+		if !claimed {
+			// 已被其他调度周期抢占（并发下应不会发生，防御性跳过）
+			continue
+		}
+		item := items[i]
+		item.Status = db.OutboundStatusSending
+		m.jobs <- &item
 	}
 }
 
-// deliverOne performs a single delivery attempt for a queue item.
-func (m *Manager) deliverOne(item *db.OutboundMessage) {
-	// Mark as sending to avoid concurrent workers double-delivering.
-	item.Status = db.OutboundStatusSending
-	if err := m.stores.Outbound.Update(item); err != nil {
-		log.Printf("outbound: update item %d to sending failed: %v", item.ID, err)
-		return
+// acquireDomain 获取收件域（或中继）的并发信号量，限制对同一目标域同时
+// 打开的 SMTP 连接数。limit <= 0 表示不限制。
+func (m *Manager) acquireDomain(domain string) func() {
+	limit := m.cfg.MaxConcurrentPerDomain
+	if limit <= 0 {
+		return func() {}
 	}
 
-	resp, err := m.mailer.Deliver(item.FromAddr, item.ToAddr, []byte(item.RawData))
+	m.domMu.Lock()
+	sem := m.dom[domain]
+	if sem == nil {
+		sem = make(chan struct{}, limit)
+		m.dom[domain] = sem
+	}
+	m.domMu.Unlock()
+
+	sem <- struct{}{}
+	return func() { <-sem }
+}
+
+// deliverKey 返回并发限制使用的目标标识：配置了中继时所有连接都打向同一
+// smarthost，统一按 "relay" 限制；否则按收件域名限制。
+func (m *Manager) deliverKey(to string) string {
+	if m.mailer.Relay != nil && m.mailer.Relay.Host != "" {
+		return "relay"
+	}
+	at := strings.LastIndex(to, "@")
+	if at < 0 || at == len(to)-1 {
+		return ""
+	}
+	return strings.ToLower(to[at+1:])
+}
+
+// deliverOne performs a single delivery attempt for a queue item.
+// 调用前该项已被原子抢占为 sending，此处不再重复置位。
+func (m *Manager) deliverOne(item *db.OutboundMessage) {
+	release := m.acquireDomain(item.ToAddr)
+	defer release()
+
+	resp, err := m.deliver(item.FromAddr, item.ToAddr, []byte(item.RawData))
 
 	now := time.Now()
 	item.Attempts++

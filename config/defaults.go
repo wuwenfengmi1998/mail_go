@@ -39,5 +39,15 @@ const (
 // DefaultProtocolLogKeepDays 是 SMTP/IMAP/POP3 协议调用日志的默认保留天数。
 const DefaultProtocolLogKeepDays = 30
 
+// Outbound delivery concurrency defaults.
+const (
+	// DefaultOutboundWorkers 并发投递 worker 数（0/1 为串行）。
+	DefaultOutboundWorkers = 4
+	// DefaultOutboundBatchSize 每次扫描最多取出的待投递邮件数。
+	DefaultOutboundBatchSize = 50
+	// DefaultMaxConcurrentPerDomain 同一收件域的最大并发连接数。
+	DefaultMaxConcurrentPerDomain = 2
+)
+
 // ConfigFileName is the name of the configuration file
 const ConfigFileName = "mail_go.toml"
