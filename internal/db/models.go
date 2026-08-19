@@ -60,8 +60,8 @@ type Message struct {
 	ToAddr    string    `gorm:"size:2048;not null" json:"to_addr"`
 	CcAddr    string    `gorm:"size:2048" json:"cc_addr"`
 	Subject   string    `gorm:"size:1024" json:"subject"`
-	TextBody  string    `gorm:"type:text" json:"text_body"`
-	HtmlBody  string    `gorm:"type:text" json:"html_body"`
+	TextBody  string    `gorm:"type:mediumtext" json:"text_body"`
+	HtmlBody  string    `gorm:"type:mediumtext" json:"html_body"`
 	RawData   string    `gorm:"type:mediumtext" json:"raw_data"`
 	IsRead    bool      `gorm:"default:false" json:"is_read"`
 	IsFlagged bool      `gorm:"default:false" json:"is_flagged"`
@@ -155,10 +155,11 @@ func (ProtocolLog) TableName() string {
 }
 
 // Attachment represents a file attached to an email message.
+// 注意：不声明 Message 关联（避免 GORM 外键名 MessageID 与
+// Message.MessageID 字符串字段冲突，导致 AutoMigrate 生成错误外键）。
 type Attachment struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`
 	MessageID   uint      `gorm:"index;not null" json:"message_id"`
-	Message     Message   `gorm:"foreignKey:MessageID" json:"message"`
 	FileName    string    `gorm:"size:255;not null" json:"file_name"`
 	FilePath    string    `gorm:"size:512;not null" json:"file_path"`
 	ContentType string    `gorm:"size:128" json:"content_type"`
