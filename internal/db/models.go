@@ -114,6 +114,10 @@ type BanEntry struct {
 	IPAddress string    `gorm:"size:45;index;not null" json:"ip_address"`
 	Reason    string    `gorm:"size:255" json:"reason"`
 	FailCount int       `gorm:"default:0" json:"fail_count"`
+	// BanCount 是该 IP 累计达到失败阈值的次数（含未封禁的前几次）。
+	// 阶段封禁依据：前 3 次只计数不封禁，第 4 次起按档位递增时长。
+	// 成功登录或管理员解封会删除记录，次数随之清零。
+	BanCount  int       `gorm:"default:0" json:"ban_count"`
 	ExpiresAt time.Time `gorm:"index" json:"expires_at"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

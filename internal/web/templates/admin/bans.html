@@ -18,25 +18,21 @@
                 <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>用户管理</a>
                 <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>所有邮件</a>
                 <a href="/admin/outbound" {{if eq .activeFolder "outbound"}}class="active"{{end}}>外发队列</a>
-                                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>协议日志</a>
-<a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>IP黑名单</a>
+                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>协议日志</a>
+                <a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>IP黑名单</a>
             </div>
             <div class="content">
                 <div class="card">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
                         <h2>IP 黑名单</h2>
-                        <form method="POST" action="/admin/bans/cleanup" style="display:inline;">
-                            <button type="submit" class="btn btn-primary">清理过期记录</button>
-                        </form>
+                        <span style="color:#7f8c8d;font-size:13px;">阶段性封禁：第 4 次触发起封禁，30分钟 → 3小时 → 3个月 → 半年（上限）</span>
                     </div>
-                    {{if not .bans}}
-                    <p style="color:#7f8c8d;text-align:center;padding:40px 0;">暂无被封禁的 IP</p>
-                    {{else}}
                     <table>
                         <thead>
                             <tr>
-                                <th>ID</th>
                                 <th>IP 地址</th>
+                                <th>状态</th>
+                                <th>封禁次数</th>
                                 <th>失败次数</th>
                                 <th>原因</th>
                                 <th>到期时间</th>
@@ -44,16 +40,24 @@
                             </tr>
                         </thead>
                         <tbody>
-                        {{range .bans}}
+                        {{range .rows}}
                             <tr>
-                                <td>{{.ID}}</td>
                                 <td>{{.IPAddress}}</td>
+                                <td>
+                                    {{if .Active}}<span class="badge" style="background:#e74c3c;color:#fff;">封禁中</span>
+                                    {{else}}<span class="badge" style="background:#95a5a6;color:#fff;">已过期</span>{{end}}
+                                </td>
+                                <td>
+                                    {{if .BanCount}}
+                                        {{if gt .BanCount 3}}第{{sub .BanCount 3}}次封禁{{else}}仅计数{{end}}
+                                    {{else}}—{{end}}
+                                </td>
                                 <td>{{.FailCount}}</td>
-                                <td>{{.Reason}}</td>
-                                <td>{{.ExpiresAt.Format "2006-01-02 15:04:05"}}</td>
+                                <td>{{if .Reason}}{{.Reason}}{{else}}—{{end}}</td>
+                                <td>{{.ExpiresAt.Format "2006-01-02 15:04:05"}}{{if not .Active}}（已过期）{{end}}</td>
                                 <td>
                                     <form method="POST" action="/admin/bans/{{.ID}}/unban" style="display:inline;"
-                                          onsubmit="return confirm('确定要解封 IP {{.IPAddress}} 吗？');">
+                                          onsubmit="return confirm('确定要解封 IP {{.IPAddress}} 吗？解封后该 IP 的封禁档位将清零。');">
                                         <button type="submit" class="btn btn-primary btn-sm">解封</button>
                                     </form>
                                 </td>
@@ -61,6 +65,8 @@
                         {{end}}
                         </tbody>
                     </table>
+                    {{if not .rows}}
+                    <p style="color:#7f8c8d;text-align:center;padding:40px 0;">暂无封禁记录</p>
                     {{end}}
                 </div>
                 {{if .totalPages}}
@@ -68,7 +74,7 @@
                     {{if gt .page 1}}
                     <a href="/admin/bans?page={{sub .page 1}}">上一页</a>
                     {{end}}
-                    <span>第 {{.page}} / {{.totalPages}} 页</span>
+                    <span>第 {{.page}} / {{.totalPages}} 页（共 {{.total}} 条）</span>
                     {{if lt .page .totalPages}}
                     <a href="/admin/bans?page={{add .page 1}}">下一页</a>
                     {{end}}

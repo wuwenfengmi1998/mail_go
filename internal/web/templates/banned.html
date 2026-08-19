@@ -52,6 +52,10 @@
                 <span class="detail-value">{{.entry.IPAddress}}</span>
             </div>
             <div class="detail-row">
+                <span class="detail-label">封禁档位</span>
+                <span class="detail-value">{{if gt .entry.BanCount 3}}第 {{sub .entry.BanCount 3}} 次封禁{{else}}—{{end}}</span>
+            </div>
+            <div class="detail-row">
                 <span class="detail-label">原因</span>
                 <span class="detail-value">{{.entry.Reason}}</span>
             </div>

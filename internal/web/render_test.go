@@ -68,6 +68,18 @@ func TestRenderAllPages(t *testing.T) {
 		}},
 		{"settings", ginH{"currentUser": user, "activeFolder": "settings", "error": "", "success": "", "inboxUnread": int64(2), "draftsTotal": int64(1), "sentTotal": int64(3)}},
 		{"admin_dashboard", ginH{"currentUser": user, "activeFolder": "admin", "domainCount": 2, "userCount": 5, "totalMails": 100, "banCount": 1, "inboxCount": 50, "sentCount": 30, "draftsCount": 10, "trashCount": 5, "inboxSize": int64(1024), "sentSize": int64(512), "totalSize": int64(2048), "todayReceived": 3, "todaySent": 2, "weekReceived": 20, "weekSent": 15}},
+		{"admin_bans", ginH{
+			"currentUser": user, "activeFolder": "bans",
+			"rows": []struct {
+				db.BanEntry
+				Active bool
+			}{
+				{BanEntry: db.BanEntry{IPAddress: "203.0.113.7", BanCount: 4, FailCount: 5, Reason: "第1次封禁：登录失败次数过多（第4次触发，失败5次）", ExpiresAt: now.Add(20 * time.Minute)}, Active: true},
+				{BanEntry: db.BanEntry{IPAddress: "203.0.113.9", BanCount: 5, FailCount: 6, Reason: "第2次封禁：邮件协议认证失败次数过多（第5次触发，失败6次）", ExpiresAt: now.Add(-24 * time.Hour)}, Active: false},
+				{BanEntry: db.BanEntry{IPAddress: "10.0.0.2", BanCount: 1, FailCount: 5, Reason: "", ExpiresAt: time.Time{}}, Active: false},
+			},
+			"total": 3, "page": 1, "pageSize": 20, "totalPages": 1,
+		}},
 		{"admin_protocol_logs", ginH{
 			"currentUser": user, "activeFolder": "protocol-logs",
 			"logs": []db.ProtocolLog{

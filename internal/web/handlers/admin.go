@@ -721,15 +721,19 @@ func (h *AdminHandler) UpdateUser(c *gin.Context) {
 
 // ListBans renders the IP ban list page.
 func (h *AdminHandler) ListBans(c *gin.Context) {
-	// Clean up expired entries first
-	h.stores.Bans.Cleanup()
-
 	page := getPageParam(c, "page", 1)
 
 	bans, total, err := h.stores.Bans.List(page, 20)
 	if err != nil {
 		c.String(http.StatusInternalServerError, "加载黑名单失败: %v", err)
 		return
+	}
+
+	// 标记当前是否仍处于封禁中
+	now := time.Now()
+	rows := make([]banRow, 0, len(bans))
+	for _, b := range bans {
+		rows = append(rows, banRow{BanEntry: b, Active: b.ExpiresAt.After(now)})
 	}
 
 	currentUser, _ := c.Get("currentUser")
@@ -744,13 +748,19 @@ func (h *AdminHandler) ListBans(c *gin.Context) {
 
 	c.HTML(200, "admin_bans", gin.H{
 		"currentUser":  currentUser,
-		"bans":         bans,
+		"rows":         rows,
 		"total":        total,
 		"page":         page,
 		"pageSize":     20,
 		"totalPages":   totalPages,
 		"activeFolder": "bans",
 	})
+}
+
+// banRow 是黑名单列表行：附带了当前是否封禁中的标记。
+type banRow struct {
+	db.BanEntry
+	Active bool
 }
 
 // UnbanIP removes a ban entry by ID.
@@ -766,12 +776,6 @@ func (h *AdminHandler) UnbanIP(c *gin.Context) {
 		return
 	}
 
-	c.Redirect(http.StatusFound, "/admin/bans")
-}
-
-// CleanupBans removes all expired ban entries.
-func (h *AdminHandler) CleanupBans(c *gin.Context) {
-	h.stores.Bans.Cleanup()
 	c.Redirect(http.StatusFound, "/admin/bans")
 }
 

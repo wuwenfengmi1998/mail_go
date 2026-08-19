@@ -296,7 +296,6 @@ func (ws *WebServer) registerRoutes() {
 		admin.POST("/outbound/:id/cancel", adminHandler.CancelOutbound)
 		admin.GET("/bans", adminHandler.ListBans)
 		admin.POST("/bans/:id/unban", adminHandler.UnbanIP)
-		admin.POST("/bans/cleanup", adminHandler.CleanupBans)
 		admin.GET("/protocol-logs", adminHandler.ListProtocolLogs)
 		admin.POST("/protocol-logs/cleanup", adminHandler.CleanupProtocolLogs)
 	}

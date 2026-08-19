@@ -199,11 +199,12 @@ func (s *smtpSession) Auth(mech string) (sasl.Server, error) {
 
 		user, err := s.backend.server.stores.Users.Authenticate(username, password)
 		if err != nil {
-			// 认证失败计数，达到阈值封禁（与 Web 登录共用 ban_entries）
+			// 认证失败计数，达到阈值按档位封禁（与 Web 登录共用 ban_entries）
 			s.backend.server.stores.RecordAuthFailure(
 				s.clientIP,
 				s.backend.server.banCfg.MaxFailAttempts,
 				s.backend.server.banCfg.BanDurationMin,
+				"邮件协议认证失败次数过多",
 			)
 			s.recordFail("用户名或密码错误")
 			return smtp.ErrAuthFailed

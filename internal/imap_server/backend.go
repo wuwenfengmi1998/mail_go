@@ -44,8 +44,8 @@ func (b *imapBackend) Login(connInfo *imap.ConnInfo, username, password string) 
 
 	user, err := b.stores.Users.Authenticate(username, password)
 	if err != nil {
-		// 认证失败计数，达到阈值封禁（与 Web 登录共用 ban_entries）
-		b.stores.RecordAuthFailure(clientIP, b.banCfg.MaxFailAttempts, b.banCfg.BanDurationMin)
+		// 认证失败计数，达到阈值按档位封禁（与 Web 登录共用 ban_entries）
+		b.stores.RecordAuthFailure(clientIP, b.banCfg.MaxFailAttempts, b.banCfg.BanDurationMin, "邮件协议认证失败次数过多")
 		b.recordLogin(clientIP, username, false, "用户名或密码错误", "LOGIN 失败", 0, now)
 		return nil, fmt.Errorf("invalid credentials: %w", err)
 	}

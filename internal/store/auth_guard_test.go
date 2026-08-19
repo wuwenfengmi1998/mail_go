@@ -3,6 +3,7 @@ package store
 import (
 	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,46 +25,210 @@ func newTestStores(t *testing.T) *Stores {
 	return NewStores(gdb)
 }
 
-// TestRecordAuthFailureBansAfterThreshold 验证连续认证失败达到阈值后封禁。
-func TestRecordAuthFailureBansAfterThreshold(t *testing.T) {
+// TestRecordAuthFailureFreeTriggers 验证前 3 次达到阈值只计数不封禁，
+// 第 4 次起封禁（第 1 次封禁 = 配置时长）。
+func TestRecordAuthFailureFreeTriggers(t *testing.T) {
 	s := newTestStores(t)
 	const ip = "203.0.113.10"
-	const maxFail = 3
+	const maxFail = 2
 
-	// 前两次失败不封禁
-	for i := 1; i < maxFail; i++ {
-		banned, count := s.RecordAuthFailure(ip, maxFail, 30)
-		if banned {
-			t.Fatalf("attempt %d should not be banned yet", i)
+	failOnce := func() bool {
+		banned, _ := s.RecordAuthFailure(ip, maxFail, 30, "登录失败次数过多")
+		return banned
+	}
+
+	// 第 1 次触发需要 maxFail 次失败
+	for f := 0; f < maxFail; f++ {
+		if failOnce() {
+			t.Fatalf("trigger 1 (fail %d) should not ban yet", f+1)
 		}
-		if count != i {
-			t.Fatalf("attempt %d: fail count = %d, want %d", i, count, i)
+	}
+	// 达到阈值后失败计数持续累计，之后每次失败都会再次触发
+	for i := 2; i <= 3; i++ {
+		if failOnce() {
+			t.Fatalf("trigger %d should not ban yet", i)
 		}
 	}
 
-	// 第三次失败触发封禁
-	banned, count := s.RecordAuthFailure(ip, maxFail, 30)
-	if !banned {
-		t.Fatal("attempt reaching threshold should ban the IP")
+	entry, err := s.Bans.GetByIP(ip)
+	if err != nil {
+		t.Fatalf("get entry: %v", err)
 	}
-	if count != maxFail {
-		t.Fatalf("fail count = %d, want %d", count, maxFail)
+	if entry.BanCount != 3 {
+		t.Fatalf("ban_count = %d, want 3", entry.BanCount)
+	}
+	if !entry.ExpiresAt.IsZero() {
+		t.Fatal("observation record must not have expiry")
+	}
+
+	// 第 4 次触发封禁，时长 = firstBanMin（30 分钟）
+	if !failOnce() {
+		t.Fatal("4th trigger should ban the IP")
+	}
+
+	entry, err = s.Bans.GetByIP(ip)
+	if err != nil {
+		t.Fatalf("get entry: %v", err)
+	}
+	wantExpiry := time.Now().Add(30 * time.Minute)
+	if entry.ExpiresAt.Before(wantExpiry.Add(-time.Minute)) || entry.ExpiresAt.After(wantExpiry.Add(time.Minute)) {
+		t.Fatalf("ban expiry = %v, want ~%v", entry.ExpiresAt, wantExpiry)
+	}
+	if !strings.Contains(entry.Reason, "第1次封禁") {
+		t.Fatalf("reason = %q, want 第1次封禁", entry.Reason)
+	}
+	if entry.BanCount != 4 {
+		t.Fatalf("ban_count = %d, want 4", entry.BanCount)
 	}
 
 	// IP 现在处于封禁状态
-	banned, entry := s.Bans.IsBanned(ip)
-	if !banned {
+	if banned, _ := s.Bans.IsBanned(ip); !banned {
 		t.Fatal("IP should be banned")
 	}
-	if entry.ExpiresAt.Before(time.Now().Add(29 * time.Minute)) {
-		t.Fatalf("ban expiry too short: %v", entry.ExpiresAt)
+}
+
+// TestStagedBanEscalation 验证封禁档位递增：30分钟 → 3小时 → 3个月 → 半年（上限）。
+func TestStagedBanEscalation(t *testing.T) {
+	s := newTestStores(t)
+	const ip = "203.0.113.11"
+	const maxFail = 2
+
+	failOnce := func() bool {
+		banned, _ := s.RecordAuthFailure(ip, maxFail, 30, "登录失败次数过多")
+		return banned
+	}
+
+	// 第 1 次触发需要 maxFail 次失败；此后每次失败即触发下一轮
+	if failOnce() {
+		t.Fatal("fail 1 must not trigger")
+	}
+	if failOnce() { // 触发 1
+		t.Fatal("trigger 1 must not ban")
+	}
+	if failOnce() { // 触发 2
+		t.Fatal("trigger 2 must not ban")
+	}
+	if failOnce() { // 触发 3
+		t.Fatal("trigger 3 must not ban")
+	}
+
+	// 第 4 次触发：30 分钟
+	if !failOnce() {
+		t.Fatal("trigger 4 should ban")
+	}
+	expectBanDuration(t, s, ip, 4, 30*time.Minute)
+
+	// 第 5 次：3 小时
+	expireBan(t, s, ip)
+	if !failOnce() {
+		t.Fatal("trigger 5 should ban")
+	}
+	expectBanDuration(t, s, ip, 5, 3*time.Hour)
+
+	// 第 6 次：3 个月
+	expireBan(t, s, ip)
+	if !failOnce() {
+		t.Fatal("trigger 6 should ban")
+	}
+	expectBanDuration(t, s, ip, 6, 90*24*time.Hour)
+
+	// 第 7 次：半年
+	expireBan(t, s, ip)
+	if !failOnce() {
+		t.Fatal("trigger 7 should ban")
+	}
+	expectBanDuration(t, s, ip, 7, 180*24*time.Hour)
+
+	// 第 8 次：仍为半年（上限）
+	expireBan(t, s, ip)
+	if !failOnce() {
+		t.Fatal("trigger 8 should ban")
+	}
+	expectBanDuration(t, s, ip, 8, 180*24*time.Hour)
+
+	entry, _ := s.Bans.GetByIP(ip)
+	if !strings.Contains(entry.Reason, "第5次封禁") {
+		t.Fatalf("reason = %q, want 第5次封禁", entry.Reason)
+	}
+}
+
+// expectBanDuration 断言该 IP 当前封禁时长约为 min（允许 2 分钟误差）。
+func expectBanDuration(t *testing.T, s *Stores, ip string, trigger int, min time.Duration) {
+	t.Helper()
+	entry, err := s.Bans.GetByIP(ip)
+	if err != nil {
+		t.Fatalf("trigger %d: %v", trigger, err)
+	}
+	diff := entry.ExpiresAt.Sub(time.Now())
+	if diff < min-2*time.Minute || diff > min+2*time.Minute {
+		t.Fatalf("trigger %d: ban duration = %v, want ~%v", trigger, diff, min)
+	}
+}
+
+// expireBan 把该 IP 的封禁记录改成已过期（模拟时间流逝）。
+func expireBan(t *testing.T, s *Stores, ip string) {
+	t.Helper()
+	entry, err := s.Bans.GetByIP(ip)
+	if err != nil {
+		t.Fatalf("get entry: %v", err)
+	}
+	entry.ExpiresAt = time.Now().Add(-time.Minute)
+	if err := s.Bans.Update(entry); err != nil {
+		t.Fatalf("update entry: %v", err)
+	}
+}
+
+// TestBanListOnlyBannedOrExpired 验证列表只返回封禁（含已过期）记录，
+// 仅计数的观察记录不出现。
+func TestBanListOnlyBannedOrExpired(t *testing.T) {
+	s := newTestStores(t)
+
+	// 观察记录：失败计数，未封禁（无到期时间）
+	if _, err := s.Bans.IncrementFail("203.0.113.20"); err != nil {
+		t.Fatalf("increment: %v", err)
+	}
+	// 当前生效的封禁
+	if err := s.Bans.Create(&db.BanEntry{
+		IPAddress: "198.51.100.21",
+		Reason:    "第1次封禁：登录失败次数过多（第4次触发，失败5次）",
+		FailCount: 5,
+		BanCount:  4,
+		ExpiresAt: time.Now().Add(30 * time.Minute),
+	}); err != nil {
+		t.Fatalf("create ban: %v", err)
+	}
+	// 已过期的封禁（历史）
+	if err := s.Bans.Create(&db.BanEntry{
+		IPAddress: "198.51.100.22",
+		Reason:    "第2次封禁：登录失败次数过多（第5次触发，失败6次）",
+		FailCount: 6,
+		BanCount:  5,
+		ExpiresAt: time.Now().Add(-24 * time.Hour),
+	}); err != nil {
+		t.Fatalf("create expired ban: %v", err)
+	}
+
+	entries, total, err := s.Bans.List(1, 10)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("total = %d, want 2", total)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("len = %d, want 2", len(entries))
+	}
+	for _, e := range entries {
+		if e.ExpiresAt.Before(time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)) {
+			t.Fatalf("observation record leaked into list: %+v", e)
+		}
 	}
 }
 
 // TestRecordAuthFailureEmptyIPSafe 空 IP 不应产生副作用。
 func TestRecordAuthFailureEmptyIPSafe(t *testing.T) {
 	s := newTestStores(t)
-	banned, count := s.RecordAuthFailure("", 3, 30)
+	banned, count := s.RecordAuthFailure("", 3, 30, "登录失败次数过多")
 	if banned || count != 0 {
 		t.Fatalf("empty IP must be a no-op: banned=%v count=%d", banned, count)
 	}

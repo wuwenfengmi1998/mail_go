@@ -11,7 +11,6 @@ import (
 
 	"mail_go/config"
 	"mail_go/internal/auth"
-	"mail_go/internal/db"
 	"mail_go/internal/store"
 
 	"github.com/gin-contrib/sessions"
@@ -74,19 +73,10 @@ func (h *AuthHandler) DoLogin(c *gin.Context) {
 
 	user, err := h.stores.Users.Authenticate(email, password)
 	if err != nil {
-		failCount, _ := h.stores.Bans.IncrementFail(ip)
-
-		if failCount >= h.banCfg.MaxFailAttempts {
-			banDuration := time.Duration(h.banCfg.BanDurationMin) * time.Minute
-			banEntry := &db.BanEntry{
-				IPAddress: ip,
-				Reason:    fmt.Sprintf("登录失败次数过多 (%d次)", failCount),
-				FailCount: failCount,
-				ExpiresAt: time.Now().Add(banDuration),
-			}
-			h.stores.Bans.Create(banEntry)
-
-			c.HTML(http.StatusForbidden, "banned", gin.H{"entry": banEntry})
+		banned, failCount := h.stores.RecordAuthFailure(ip, h.banCfg.MaxFailAttempts, h.banCfg.BanDurationMin, "登录失败次数过多")
+		if banned {
+			entry, _ := h.stores.Bans.GetByIP(ip)
+			c.HTML(http.StatusForbidden, "banned", gin.H{"entry": entry})
 			return
 		}
 
@@ -156,18 +146,10 @@ func (h *AuthHandler) LDAPLogin(c *gin.Context) {
 	if err != nil {
 		log.Printf("LDAP 认证失败: %v", err)
 
-		failCount, _ := h.stores.Bans.IncrementFail(ip)
-		if failCount >= h.banCfg.MaxFailAttempts {
-			banDuration := time.Duration(h.banCfg.BanDurationMin) * time.Minute
-			banEntry := &db.BanEntry{
-				IPAddress: ip,
-				Reason:    fmt.Sprintf("登录失败次数过多 (%d次)", failCount),
-				FailCount: failCount,
-				ExpiresAt: time.Now().Add(banDuration),
-			}
-			h.stores.Bans.Create(banEntry)
-
-			c.HTML(http.StatusForbidden, "banned", gin.H{"entry": banEntry})
+		banned, failCount := h.stores.RecordAuthFailure(ip, h.banCfg.MaxFailAttempts, h.banCfg.BanDurationMin, "LDAP 登录失败次数过多")
+		if banned {
+			entry, _ := h.stores.Bans.GetByIP(ip)
+			c.HTML(http.StatusForbidden, "banned", gin.H{"entry": entry})
 			return
 		}
 
