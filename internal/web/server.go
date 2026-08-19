@@ -177,6 +177,14 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 	engine.Use(gin.Logger())
 	engine.Use(gin.Recovery())
 
+	// 仅信任本机回环上的反向代理（Caddy/Nginx）。外部直连时
+	// X-Forwarded-For 不可信，防止伪造客户端 IP 绕过登录封禁或
+	// 恶意封禁他人 IP。gin 对 Unix socket 监听无条件信任转发头，
+	// 因此 socket 必须保持仅本机可达。
+	if err := engine.SetTrustedProxies([]string{"127.0.0.1", "::1"}); err != nil {
+		return nil, fmt.Errorf("设置可信代理失败: %w", err)
+	}
+
 	// Session store (cookie-based). The signing key comes from the config
 	// file (auto-generated random key) or the MAILGO_SECRET_KEY env var.
 	cookieStore := cookie.NewStore([]byte(cfg.SecretKey))

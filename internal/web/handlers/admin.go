@@ -860,7 +860,7 @@ func (h *AdminHandler) AdminDownloadAttachment(c *gin.Context) {
 		return
 	}
 
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", att.FileName))
+	c.Header("Content-Disposition", formatContentDisposition(att.FileName))
 	c.Data(http.StatusOK, att.ContentType, data)
 }
 

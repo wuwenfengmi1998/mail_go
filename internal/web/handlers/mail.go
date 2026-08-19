@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -264,62 +265,8 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 
 	// Build the email content
 	fromAddr := fmt.Sprintf("%s@%s", currentUser.Username, currentUser.Domain.Name)
+	messageID, rawMessage := buildOutgoingMessage(fromAddr, to, cc, subject, body, htmlBody, attachments)
 	now := time.Now()
-	messageID := fmt.Sprintf("<%s@mail_go>", uuid.New().String())
-
-	// Construct the raw email message
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("From: %s\r\n", fromAddr))
-	sb.WriteString(fmt.Sprintf("To: %s\r\n", to))
-	if cc != "" {
-		sb.WriteString(fmt.Sprintf("Cc: %s\r\n", cc))
-	}
-	sb.WriteString(fmt.Sprintf("Subject: %s\r\n", subject))
-	sb.WriteString(fmt.Sprintf("Message-ID: %s\r\n", messageID))
-	sb.WriteString(fmt.Sprintf("Date: %s\r\n", now.Format(time.RFC1123Z)))
-	sb.WriteString("MIME-Version: 1.0\r\n")
-
-	// Attachments are wrapped in an outer multipart/mixed container.
-	outerBoundary := ""
-	hasAttachments := len(attachments) > 0
-	if hasAttachments {
-		outerBoundary = fmt.Sprintf("----=_Mixed_%s", uuid.New().String())
-		sb.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=\"%s\"\r\n", outerBoundary))
-		sb.WriteString("\r\n")
-		sb.WriteString(fmt.Sprintf("--%s\r\n", outerBoundary))
-	}
-
-	// Build message body with multipart/alternative if HTML is present
-	if htmlBody != "" {
-		boundary := fmt.Sprintf("----=_Part_%s", uuid.New().String())
-		sb.WriteString(fmt.Sprintf("Content-Type: multipart/alternative; boundary=\"%s\"\r\n", boundary))
-		sb.WriteString("\r\n")
-		sb.WriteString(fmt.Sprintf("--%s\r\n", boundary))
-		sb.WriteString("Content-Type: text/plain; charset=utf-8\r\n\r\n")
-		sb.WriteString(body)
-		sb.WriteString(fmt.Sprintf("\r\n--%s\r\n", boundary))
-		sb.WriteString("Content-Type: text/html; charset=utf-8\r\n\r\n")
-		sb.WriteString(htmlBody)
-		sb.WriteString(fmt.Sprintf("\r\n--%s--\r\n", boundary))
-	} else {
-		sb.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
-		sb.WriteString("\r\n")
-		sb.WriteString(body)
-		sb.WriteString("\r\n")
-	}
-
-	// Append attachment parts to the multipart/mixed container.
-	for _, att := range attachments {
-		sb.WriteString(fmt.Sprintf("--%s\r\n", outerBoundary))
-		sb.WriteString(fmt.Sprintf("Content-Type: %s; name=\"%s\"\r\n", att.contentType, att.filename))
-		sb.WriteString("Content-Transfer-Encoding: base64\r\n")
-		sb.WriteString(fmt.Sprintf("Content-Disposition: attachment; filename=\"%s\"\r\n\r\n", att.filename))
-		sb.WriteString(base64LineWrap(att.data))
-		sb.WriteString("\r\n")
-	}
-	if hasAttachments {
-		sb.WriteString(fmt.Sprintf("--%s--\r\n", outerBoundary))
-	}
 
 	allRecipients := append(parseAddressInput(to), parseAddressInput(cc)...)
 	localUsers := make([]*db.User, 0, len(allRecipients))
@@ -367,7 +314,7 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 			return
 		}
 		for _, rcpt := range externalRecipients {
-			if _, err := ob.Enqueue(currentUser, fromAddr, rcpt, []byte(sb.String())); err != nil {
+			if _, err := ob.Enqueue(currentUser, fromAddr, rcpt, []byte(rawMessage)); err != nil {
 				c.HTML(http.StatusBadRequest, "compose", gin.H{
 					"currentUser":  currentUser,
 					"activeFolder": "compose",
@@ -395,7 +342,7 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 			Subject:   subject,
 			TextBody:  body,
 			HtmlBody:  htmlBody,
-			RawData:   sb.String(),
+			RawData:   rawMessage,
 			Date:      now,
 			IsRead:    false,
 		}
@@ -426,7 +373,7 @@ func (h *MailHandler) DoSend(c *gin.Context) {
 		Subject:   subject,
 		TextBody:  body,
 		HtmlBody:  htmlBody,
-		RawData:   sb.String(),
+		RawData:   rawMessage,
 		Date:      now,
 		IsRead:    true,
 	}
@@ -481,6 +428,94 @@ func parseAddressInput(input string) []string {
 		}
 	}
 	return addresses
+}
+
+// sanitizeHeaderField removes CR/LF/NUL from a value destined for an RFC 5322
+// message header, preventing header injection (e.g. smuggling a Bcc or
+// Reply-To header via a crafted subject or address list).
+func sanitizeHeaderField(s string) string {
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", "")
+	s = strings.ReplaceAll(s, "\x00", "")
+	return s
+}
+
+// encodeSubject prepares a subject for safe inclusion as a message header:
+// header injection characters are stripped and non-ASCII content is encoded
+// per RFC 2047.
+func encodeSubject(s string) string {
+	return mime.QEncoding.Encode("utf-8", sanitizeHeaderField(s))
+}
+
+// formatContentDisposition builds a Content-Disposition header value for the
+// given filename, quoting/encoding it per RFC 2183/2231 (also neutralizes
+// CR/LF injection through crafted filenames).
+func formatContentDisposition(filename string) string {
+	return mime.FormatMediaType("attachment", map[string]string{"filename": filename})
+}
+
+// buildOutgoingMessage constructs the raw RFC 5322 message for the web
+// compose form and returns its Message-ID. All header values derived from
+// user input are sanitized to prevent CRLF header injection.
+func buildOutgoingMessage(from, to, cc, subject, body, htmlBody string, attachments []pendingAttachment) (messageID, raw string) {
+	now := time.Now()
+	messageID = fmt.Sprintf("<%s@mail_go>", uuid.New().String())
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("From: %s\r\n", sanitizeHeaderField(from)))
+	sb.WriteString(fmt.Sprintf("To: %s\r\n", sanitizeHeaderField(to)))
+	if cc != "" {
+		sb.WriteString(fmt.Sprintf("Cc: %s\r\n", sanitizeHeaderField(cc)))
+	}
+	sb.WriteString(fmt.Sprintf("Subject: %s\r\n", encodeSubject(subject)))
+	sb.WriteString(fmt.Sprintf("Message-ID: %s\r\n", messageID))
+	sb.WriteString(fmt.Sprintf("Date: %s\r\n", now.Format(time.RFC1123Z)))
+	sb.WriteString("MIME-Version: 1.0\r\n")
+
+	// Attachments are wrapped in an outer multipart/mixed container.
+	outerBoundary := ""
+	hasAttachments := len(attachments) > 0
+	if hasAttachments {
+		outerBoundary = fmt.Sprintf("----=_Mixed_%s", uuid.New().String())
+		sb.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=\"%s\"\r\n", outerBoundary))
+		sb.WriteString("\r\n")
+		sb.WriteString(fmt.Sprintf("--%s\r\n", outerBoundary))
+	}
+
+	// Build message body with multipart/alternative if HTML is present
+	if htmlBody != "" {
+		boundary := fmt.Sprintf("----=_Part_%s", uuid.New().String())
+		sb.WriteString(fmt.Sprintf("Content-Type: multipart/alternative; boundary=\"%s\"\r\n", boundary))
+		sb.WriteString("\r\n")
+		sb.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+		sb.WriteString("Content-Type: text/plain; charset=utf-8\r\n\r\n")
+		sb.WriteString(body)
+		sb.WriteString(fmt.Sprintf("\r\n--%s\r\n", boundary))
+		sb.WriteString("Content-Type: text/html; charset=utf-8\r\n\r\n")
+		sb.WriteString(htmlBody)
+		sb.WriteString(fmt.Sprintf("\r\n--%s--\r\n", boundary))
+	} else {
+		sb.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
+		sb.WriteString("\r\n")
+		sb.WriteString(body)
+		sb.WriteString("\r\n")
+	}
+
+	// Append attachment parts to the multipart/mixed container.
+	for _, att := range attachments {
+		contentType := mime.FormatMediaType(att.contentType, map[string]string{"name": att.filename})
+		sb.WriteString(fmt.Sprintf("--%s\r\n", outerBoundary))
+		sb.WriteString(fmt.Sprintf("Content-Type: %s\r\n", contentType))
+		sb.WriteString("Content-Transfer-Encoding: base64\r\n")
+		sb.WriteString(fmt.Sprintf("Content-Disposition: %s\r\n\r\n", formatContentDisposition(att.filename)))
+		sb.WriteString(base64LineWrap(att.data))
+		sb.WriteString("\r\n")
+	}
+	if hasAttachments {
+		sb.WriteString(fmt.Sprintf("--%s--\r\n", outerBoundary))
+	}
+
+	return messageID, sb.String()
 }
 
 // mimeTypes maps common file extensions to MIME types.
@@ -623,7 +658,7 @@ func (h *MailHandler) DownloadAttachment(c *gin.Context) {
 		return
 	}
 
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", att.FileName))
+	c.Header("Content-Disposition", formatContentDisposition(att.FileName))
 	c.Data(http.StatusOK, att.ContentType, data)
 }
 

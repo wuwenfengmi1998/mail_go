@@ -25,40 +25,39 @@
 
 ### 2. OAuth2 state 固定值且回调不校验（登录 CSRF / 授权码注入）
 
-- [ ] 位置：`internal/web/handlers/auth.go:230`（硬编码 `mailgo_oauth2_state`）、`OAuth2Callback` 未读取 `state` 参数
+- [x] 位置：`internal/web/handlers/auth.go`（原硬编码 `mailgo_oauth2_state`、`OAuth2Callback` 不校验 state）
 - 现状：当前部署未启用 OAuth2，属休眠漏洞，启用前必须修复。
 - 修复方案：
-  - [ ] `OAuth2Start` 用 `crypto/rand` 生成 16+ 字节随机 state，存入 session（`session.Set("oauth2_state", ...)`）后再跳转。
-  - [ ] `OAuth2Callback` 读取 `c.Query("state")` 与 session 中的值做 `subtle.ConstantTimeCompare` 比对，不匹配则拒绝。
-  - [ ] 比对后立即从 session 中清除，保证一次性使用。
+  - [x] `OAuth2Start` 用 `crypto/rand` 生成 16 字节随机 state，写入独立的短期 SameSite=Lax cookie（`mail_go_oauth2_state`，10 分钟过期，HttpOnly+Secure）。注意主会话 cookie 是 SameSite=Strict，跨站回调导航不会携带，故不能放主会话。
+  - [x] `OAuth2Callback` 读取 `c.Query("state")` 与 cookie 值做 `subtle.ConstantTimeCompare` 比对，缺失/不匹配返回 403。
+  - [x] 比对后立即清除 cookie（`MaxAge=-1`），保证一次性使用。
 - 验证：
-  - [ ] 单测：state 不匹配/缺失时回调返回 403。
+  - [x] 单测：state 缺失/不匹配/无 cookie 均 403；start 设置的 cookie 与 URL state 一致且每次不同；有效 state 通过校验进入后续流程（`oauth2_state_test.go`）。
   - [ ] 手工走完一次 OAuth2 流程（Google/GitHub）确认正常登录。
 
 ### 3. Gin 信任所有代理，`ClientIP()` 可伪造（封禁绕过 / 爆破）
 
-- [ ] 位置：`internal/web/server.go`（未调用 `SetTrustedProxies`）
+- [x] 位置：`internal/web/server.go`（未调用 `SetTrustedProxies`）
 - 现状：gin 默认信任 0.0.0.0/0，`X-Forwarded-For` 可任意伪造。线上 8080 端口当前被防火墙挡住，属纵深防御缺失；一旦 8080/socket 可达：伪造不同 IP 即可绕过登录失败封禁无限爆破，也可恶意封禁任意 IP 造成 DoS。
 - 修复方案：
-  - [ ] Web 监听为 unix socket 时：`engine.SetTrustedProxies(nil)`（Caddy 本机转发，无需信任任何代理头）。
-  - [ ] Web 监听 TCP 时：仅信任 Caddy 所在网段（如 `127.0.0.1`），`engine.SetTrustedProxies([]string{"127.0.0.1"})`。
+  - [x] 统一 `engine.SetTrustedProxies([]string{"127.0.0.1", "::1"})`：外部直连时 XFF 完全不可信（防伪造/防封禁污染）；本机 Caddy/Nginx 转发时 XFF 仍可信（保留真实客户端 IP）。注意 gin 对 Unix socket 监听无条件信任转发头，socket 必须保持仅本机可达。
   - [ ] install.sh 文档注明：8080 端口必须保持仅本机可达（防火墙/绑定 127.0.0.1）。
 - 验证：
-  - [ ] 直接带伪造 `X-Forwarded-For` 请求 8080，日志中 ClientIP 为真实地址而非伪造值。
-  - [ ] Caddy 反代路径下日志中 ClientIP 仍正确显示真实客户端 IP。
+  - [x] 单测：外部直连 + 伪造 `X-Forwarded-For` 时封禁记录落在真实 IP 上；回环代理 + XFF 时记录 XFF 中的真实客户端 IP（`trustedproxy_test.go`）。
+  - [ ] 线上回归：Caddy 反代路径下管理后台封禁列表仍显示真实客户端 IP。
 
 ### 4. Web 写信 CRLF 邮件头注入
 
-- [ ] 位置：`internal/web/handlers/mail.go:272-279`（`to`/`cc`/`subject` 直接拼头）、`:314-316`（附件文件名拼进 `Content-Disposition`/`Content-Type`）
+- [x] 位置：`internal/web/handlers/mail.go`（原 `to`/`cc`/`subject` 直接拼头、附件文件名拼进 `Content-Disposition`/`Content-Type`）
 - 现状：信封收件人经 `ParseAddress` 校验无法注入，但注入的头（如 `Reply-To`）会随邮件存储并外发，可被用于钓鱼。
 - 修复方案：
-  - [ ] 新增 `sanitizeHeader(s string) string`：strip `\r`、`\n`（及 NUL）。
-  - [ ] `to`/`cc` 每个地址经 `mail.ParseAddress` 校验后使用其规范形式；解析失败的地址整封拒发。
-  - [ ] `subject` 清洗 CRLF 后用 RFC 2047（`mime.QEncoding`）编码非 ASCII 内容。
-  - [ ] 附件文件名清洗 CRLF，优先用 `mime.FormatMediaType("attachment", map[string]string{"filename": name})` 生成完整 `Content-Disposition`。
+  - [x] 新增 `sanitizeHeaderField`：strip `\r`、`\n`、NUL，应用于 From/To/Cc 头。
+  - [x] `subject` 经 `sanitizeHeaderField` + RFC 2047（`mime.QEncoding`）编码非 ASCII 内容。
+  - [x] 附件名经 `mime.FormatMediaType` 生成 `Content-Disposition`/`Content-Type name` 参数（RFC 2231 编码，中和 CRLF 注入）。
+  - [x] 消息构建抽出为 `buildOutgoingMessage` 纯函数（可单测）；`DownloadAttachment`/`AdminDownloadAttachment` 的响应头同步改用 `formatContentDisposition`。
 - 验证：
-  - [ ] 单测：`to="a@b.com\r\nReply-To: x@evil.com"` 提交后存储的 RawData 中无注入头。
-  - [ ] 含引号/换行的附件名正常收发且头格式合法。
+  - [x] 单测：`to`/`cc`/`subject` 携带 CRLF 注入载荷时 RawData 无独立注入头；文件名含 CRLF/引号时头结构完好；非 ASCII 主题正确编码（`mail_injection_test.go`）。
+  - [ ] 含特殊字符附件名的邮件实测收发正常。
 
 ## P2 中危
 
@@ -162,8 +161,8 @@
 
 ## 修复顺序建议
 
-1. ~~#1（P0，一个下午可完成，含单测）~~ 已完成 2026-08-19
-2. #3、#5、#10（部署层加固，改动小）
-3. #4、#2（输入校验/流程修复）
+1. ~~#1（P0）~~ 已完成 2026-08-19
+2. ~~#2、#3、#4（P1）~~ 已完成 2026-08-19
+3. #5、#10（Cookie/安全头，部署层加固，改动小）
 4. #6、#7、#9（协议与存储层）
 5. 其余 P3 项随版本迭代

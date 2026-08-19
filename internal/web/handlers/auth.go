@@ -1,6 +1,9 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
@@ -218,6 +221,36 @@ func (h *AuthHandler) LDAPLogin(c *gin.Context) {
 	c.Redirect(302, "/inbox")
 }
 
+// OAuth2 state cookie 配置。state 用于防止登录 CSRF / 授权码注入：
+// 发起授权时下发随机值，回调时必须原样带回。
+//
+// 注意 state 不能放进主会话 cookie：主会话是 SameSite=Strict，
+// OAuth2 回调是从 IdP 发起的跨站顶级导航，浏览器不会携带 Strict
+// cookie，因此使用独立的短期 SameSite=Lax cookie。
+const (
+	oauth2StateCookie  = "mail_go_oauth2_state"
+	oauth2StateMaxAge  = 600 // 秒，10 分钟内完成授权流程
+	oauth2StateRandLen = 16  // 随机字节数（hex 编码后 32 字符）
+)
+
+// randomOAuth2State generates a hex-encoded cryptographically random state.
+func randomOAuth2State() (string, error) {
+	buf := make([]byte, oauth2StateRandLen)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("生成 OAuth2 state 失败: %w", err)
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+// oauth2LoginVars 是登录模板所需的公共变量。
+func (h *AuthHandler) oauth2LoginVars() gin.H {
+	return gin.H{
+		"oauth2Enabled":  h.authCfg.OAuth2Enabled,
+		"ldapEnabled":    h.authCfg.LDAPEnabled,
+		"oauth2Provider": h.authCfg.OAuth2Provider,
+	}
+}
+
 // OAuth2Start redirects to the OAuth2 provider's authorization page.
 func (h *AuthHandler) OAuth2Start(c *gin.Context) {
 	if !h.authCfg.OAuth2Enabled {
@@ -226,8 +259,13 @@ func (h *AuthHandler) OAuth2Start(c *gin.Context) {
 	}
 
 	provider := auth.NewOAuth2Provider(h.authCfg)
-	// Use a simple state for CSRF protection (in production, use a random token)
-	state := "mailgo_oauth2_state"
+	state, err := randomOAuth2State()
+	if err != nil {
+		log.Printf("生成 OAuth2 state 失败: %v", err)
+		c.String(http.StatusInternalServerError, "OAuth2 登录暂不可用，请稍后重试")
+		return
+	}
+	c.SetCookie(oauth2StateCookie, state, oauth2StateMaxAge, "/auth/oauth2", "", true, true)
 	c.Redirect(http.StatusFound, provider.GetAuthURL(state))
 }
 
@@ -237,6 +275,22 @@ func (h *AuthHandler) OAuth2Callback(c *gin.Context) {
 		c.String(http.StatusBadRequest, "OAuth2 未启用")
 		return
 	}
+
+	// 校验 state：必须与发起授权时下发的随机值一致（常量时间比较）。
+	// 缺失或不匹配视为登录 CSRF / 授权码注入，直接拒绝。
+	cookieState, cookieErr := c.Cookie(oauth2StateCookie)
+	reqState := c.Query("state")
+	if cookieErr != nil || reqState == "" ||
+		subtle.ConstantTimeCompare([]byte(cookieState), []byte(reqState)) != 1 {
+		c.HTML(http.StatusForbidden, "login", func() gin.H {
+			v := h.oauth2LoginVars()
+			v["error"] = "OAuth2 state 校验失败，请重新发起登录"
+			return v
+		}())
+		return
+	}
+	// state 一次性使用：无论后续成败都立即失效
+	c.SetCookie(oauth2StateCookie, "", -1, "/auth/oauth2", "", true, true)
 
 	code := c.Query("code")
 	if code == "" {
