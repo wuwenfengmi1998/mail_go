@@ -43,6 +43,8 @@ func main() {
 	// 关闭 GORM 自动时间戳（保留原始 CreatedAt/UpdatedAt）
 	mw := mdb.Session(&gorm.Session{SkipHooks: true})
 
+	stateWant := int64(-1) // mailbox_states 期望行数；-1 = 源库无此表不校验
+
 	// 按外键依赖顺序复制：domains → users → messages → attachments → 其余
 	// 所有时间统一 UTC（MySQL DATETIME 无时区）。
 	utc := func(t time.Time) time.Time {
@@ -177,19 +179,45 @@ func main() {
 	}
 	log.Printf("protocol_logs: %d", len(logs))
 
-	// ---- mailbox_states ----
-	var states []db.MailboxState
-	if err := sdb.Order("user_id ASC, folder ASC").Find(&states).Error; err != nil {
-		log.Fatalf("读 mailbox_states: %v", err)
+	// ---- mailbox_states（原生 SQL：该表随 UIDVALIDITY 特性存在，旧版本源库可能没有）----
+	var stateCount int64
+	sdb.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='mailbox_states'").Scan(&stateCount)
+	if stateCount > 0 {
+		srows, err := sdb.Raw("SELECT user_id, folder, uid_validity, created_at, updated_at FROM mailbox_states ORDER BY user_id, folder").Rows()
+		if err != nil {
+			log.Fatalf("读 mailbox_states: %v", err)
+		}
+		defer srows.Close()
+		states := 0
+		for srows.Next() {
+			var (
+				userID   uint
+				folder   string
+				validity uint32
+				created  *time.Time
+				updated  *time.Time
+			)
+			if err := srows.Scan(&userID, &folder, &validity, &created, &updated); err != nil {
+				log.Fatalf("扫 mailbox_states: %v", err)
+			}
+			norm := func(t *time.Time) *time.Time {
+				if t == nil || t.IsZero() {
+					return nil
+				}
+				u := t.UTC()
+				return &u
+			}
+			if err := mdb.Exec("INSERT INTO mailbox_states (user_id, folder, uid_validity, created_at, updated_at) VALUES (?,?,?,?,?)",
+				userID, folder, validity, norm(created), norm(updated)).Error; err != nil {
+				log.Fatalf("写 mailbox_states: %v", err)
+			}
+			states++
+		}
+		log.Printf("mailbox_states: %d", states)
+		stateWant = int64(states)
+	} else {
+		log.Println("mailbox_states: 源库无此表，跳过")
 	}
-	for i := range states {
-		states[i].CreatedAt = states[i].CreatedAt.UTC()
-		states[i].UpdatedAt = states[i].UpdatedAt.UTC()
-	}
-	if err := mw.Create(&states).Error; err != nil {
-		log.Fatalf("写 mailbox_states: %v", err)
-	}
-	log.Printf("mailbox_states: %d", len(states))
 
 	// ---- 校验 ----
 	check := func(table string, want int64) {
@@ -209,7 +237,9 @@ func main() {
 	check("outbound_messages", int64(len(outs)))
 	check("ban_entries", int64(bans))
 	check("protocol_logs", int64(len(logs)))
-	check("mailbox_states", int64(len(states)))
+	if stateWant >= 0 {
+		check("mailbox_states", stateWant)
+	}
 
 	log.Println("迁移完成 ✅")
 }
