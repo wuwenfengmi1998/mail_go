@@ -14,6 +14,7 @@ import (
 	"mail_go/internal/store"
 	"mail_go/internal/tlsutil"
 
+	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/backend"
 	imapserver "github.com/emersion/go-imap/server"
 )
@@ -65,6 +66,12 @@ func (s *IMAPServer) PushNewMessage(userEmail string, msg *db.Message) {
 	if update == nil {
 		return
 	}
+	// 先发 EXISTS 通知再发 FETCH 更新：RFC 2177（IDLE）要求新邮件到达
+	// 时服务器发送 EXISTS，不少客户端（如 Apple Mail）只认 EXISTS 才会
+	// 唤醒并主动拉取，仅裸 FETCH 更新会被忽略（表现为"必须手动同步"）。
+	if count, err := s.stores.Mails.CountByUserAndFolder(msg.UserID, "INBOX"); err == nil {
+		s.pushExists(userEmail, "INBOX", uint32(count))
+	}
 	s.broadcastUpdate(update, userEmail, msg.ID)
 }
 
@@ -110,6 +117,40 @@ func (s *IMAPServer) broadcastUpdate(update backend.Update, userEmail string, ms
 			log.Printf("IMAP: 推送通道已满，丢弃 %s 的更新 (msg=%d)", userEmail, msgID)
 		}
 	}
+}
+
+// pushExists 向所有监听器中「已登录该用户且已选中该邮箱」的连接直接写入
+// 未请求的 "* N EXISTS" 响应（绕过 go-imap 更新通道——其仅支持 FETCH/
+// EXPUNGE 类更新，无法表达 EXISTS）。通道满时非阻塞丢弃，与广播一致。
+func (s *IMAPServer) pushExists(userEmail, mailbox string, exists uint32) {
+	s.beMu.Lock()
+	srvs := append([]*imapserver.Server(nil), s.srvs...)
+	s.beMu.Unlock()
+
+	for _, srv := range srvs {
+		srv.ForEachConn(func(conn imapserver.Conn) {
+			ctx := conn.Context()
+			if ctx == nil || ctx.User == nil || ctx.Mailbox == nil {
+				return
+			}
+			if ctx.User.Username() != userEmail || ctx.Mailbox.Name() != mailbox {
+				return
+			}
+			select {
+			case ctx.Responses <- existsResponse(exists):
+			default:
+				log.Printf("IMAP: EXISTS 推送通道已满，丢弃 (user=%s mailbox=%s)", userEmail, mailbox)
+			}
+		})
+	}
+}
+
+// existsResponse 序列化为 "* N EXISTS\r\n"。
+type existsResponse uint32
+
+func (n existsResponse) WriteTo(w *imap.Writer) error {
+	_, err := fmt.Fprintf(w, "* %d EXISTS\r\n", uint32(n))
+	return err
 }
 
 // cloneUpdate 按类型复制一条 backend.Update：载荷（消息/序号）共享，
