@@ -261,7 +261,7 @@
     .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--border-light); }
 
     /* ---------- 通用组件（兼容管理后台） ---------- */
-    .container { max-width: 1400px; margin: 20px auto; padding: 0 20px; }
+    .container { max-width: 1400px; margin: 20px auto; padding: var(--topbar-h) 20px 0; }
     .card {
         background: #fff; border: 1px solid var(--border-light); border-radius: var(--radius);
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04); padding: 20px; margin-bottom: 16px;
@@ -416,7 +416,7 @@
         .settings-main { padding: 14px; }
 
         /* 管理后台 */
-        .container { padding: 0 12px; margin: 12px auto; }
+        .container { padding: var(--topbar-h) 12px 0; margin: 12px auto; }
         .sidebar { float: none; width: 100%; margin-bottom: 12px; display: flex; flex-wrap: wrap; gap: 2px; padding: 6px; }
         .sidebar a { margin: 0; padding: 8px 12px; font-size: 13px; }
         .content { margin-left: 0; overflow-x: auto; }
