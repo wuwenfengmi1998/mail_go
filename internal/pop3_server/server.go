@@ -395,13 +395,17 @@ func (s *POP3Server) handlePASS(conn net.Conn, password string, user *db.User) (
 
 	clientIP := store.ClientIPFromAddr(conn.RemoteAddr())
 
-	authUser, err := s.stores.Users.Authenticate(user.Username, password)
+	authUser, err := s.stores.Users.AuthenticateLogin(user.Username, password)
 	if err != nil {
 		// 认证失败计数，达到阈值按档位封禁（与 Web 登录共用 ban_entries）
 		s.stores.RecordAuthFailure(clientIP, s.banCfg.MaxFailAttempts, s.banCfg.BanDurationMin, "邮件协议认证失败次数过多")
 		sendResponse(conn, "-ERR authentication failed")
 		return nil, nil, nil
 	}
+
+	// 登录成功清零失败计数（与 Web 登录一致）：防止合法用户 IP
+	// 因失败计数只增不减被反复误封。
+	s.stores.Bans.ResetFail(clientIP)
 
 	// 保留完整邮箱作为登录标识（与 handleUSER 一致），便于推送/日志使用
 	authUser.Username = user.Username

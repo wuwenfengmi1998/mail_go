@@ -145,13 +145,18 @@ func (b *imapBackend) Login(connInfo *imap.ConnInfo, username, password string) 
 		return nil, backend.ErrInvalidCredentials
 	}
 
-	user, err := b.stores.Users.Authenticate(username, password)
+	user, err := b.stores.Users.AuthenticateLogin(username, password)
 	if err != nil {
 		// 认证失败计数，达到阈值按档位封禁（与 Web 登录共用 ban_entries）
 		b.stores.RecordAuthFailure(clientIP, b.banCfg.MaxFailAttempts, b.banCfg.BanDurationMin, "邮件协议认证失败次数过多")
 		b.recordLogin(clientIP, username, false, "用户名或密码错误", "LOGIN 失败", 0, now)
 		return nil, fmt.Errorf("invalid credentials: %w", err)
 	}
+
+	// 登录成功清零失败计数（与 Web 登录一致）：否则协议客户端的失败计数
+	// 只增不减（如配置探测、输错密码、APP 用裸用户名重试等），累计触发
+	// 档位封禁，合法用户 IP 被反复误封。
+	b.stores.Bans.ResetFail(clientIP)
 
 	email := user.Username + "@"
 	domain, err := b.stores.Domains.GetByID(user.DomainID)
