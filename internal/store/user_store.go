@@ -16,6 +16,10 @@ type UserStore interface {
 	GetByUsername(username string, domainID uint) (*db.User, error)
 	GetByEmail(email string) (*db.User, error)
 	Authenticate(email, password string) (*db.User, error)
+	// AuthenticateLogin 协议层登录（IMAP/SMTP/POP3）：与 Authenticate 相同，
+	// 但支持裸用户名（如 "kevin"），自动解析到其唯一所属域名；多域名下
+	// 用户名存在歧义时要求完整邮箱。兼容手机/客户端只填用户名的配置。
+	AuthenticateLogin(login, password string) (*db.User, error)
 	Update(user *db.User) error
 	Delete(id uint) error
 	List(domainID uint, page, size int) ([]db.User, int64, error)
@@ -92,6 +96,35 @@ func (s *userStoreGorm) Authenticate(email, password string) (*db.User, error) {
 		return nil, ErrInvalidCredentials
 	}
 	return user, nil
+}
+
+// AuthenticateLogin 协议层登录：优先按完整邮箱认证；裸用户名（无 @）时
+// 按用户名全局查找，仅在唯一归属时接受（多域名同名视为歧义，返回失败，
+// 客户端应改用完整邮箱）。密码校验与 IsActive 逻辑与 Authenticate 一致。
+func (s *userStoreGorm) AuthenticateLogin(login, password string) (*db.User, error) {
+	if strings.Contains(login, "@") {
+		return s.Authenticate(login, password)
+	}
+
+	var users []db.User
+	if err := s.db.Joins("JOIN domains ON domains.id = users.domain_id").
+		Where("users.username = ?", login).
+		Preload("Domain").
+		Find(&users).Error; err != nil {
+		return nil, ErrInvalidCredentials
+	}
+	if len(users) != 1 {
+		// 0 个：用户不存在；多个：跨域名同名歧义，要求完整邮箱
+		return nil, ErrInvalidCredentials
+	}
+	user := users[0]
+	if !user.IsActive {
+		return nil, ErrUserInactive
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		return nil, ErrInvalidCredentials
+	}
+	return &user, nil
 }
 
 // Update saves changes to an existing user record.

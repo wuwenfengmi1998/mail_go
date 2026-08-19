@@ -145,13 +145,18 @@ func (b *imapBackend) Login(connInfo *imap.ConnInfo, username, password string) 
 		return nil, backend.ErrInvalidCredentials
 	}
 
-	user, err := b.stores.Users.Authenticate(username, password)
+	user, err := b.stores.Users.AuthenticateLogin(username, password)
 	if err != nil {
 		// 认证失败计数，达到阈值按档位封禁（与 Web 登录共用 ban_entries）
 		b.stores.RecordAuthFailure(clientIP, b.banCfg.MaxFailAttempts, b.banCfg.BanDurationMin, "邮件协议认证失败次数过多")
 		b.recordLogin(clientIP, username, false, "用户名或密码错误", "LOGIN 失败", 0, now)
 		return nil, fmt.Errorf("invalid credentials: %w", err)
 	}
+
+	// 登录成功清零失败计数（与 Web 登录一致）：否则协议客户端的失败计数
+	// 只增不减（如配置探测、输错密码、APP 用裸用户名重试等），累计触发
+	// 档位封禁，合法用户 IP 被反复误封。
+	b.stores.Bans.ResetFail(clientIP)
 
 	email := user.Username + "@"
 	domain, err := b.stores.Domains.GetByID(user.DomainID)
@@ -354,7 +359,6 @@ func (m *imapMailbox) Status(items []imap.StatusItem) (*imap.MailboxStatus, erro
 	if err != nil {
 		return nil, err
 	}
-
 	status.Messages = uint32(len(messages))
 
 	var unseenCount uint32
@@ -370,7 +374,16 @@ func (m *imapMailbox) Status(items []imap.StatusItem) (*imap.MailboxStatus, erro
 		return nil, err
 	}
 	status.UidNext = uint32(maxID + 1)
-	status.UidValidity = 1
+	// UIDVALIDITY 持久化随机值（RFC 3501）：数据库重建导致消息 ID 空间
+	// 变化时该值随之改变，客户端才会丢弃旧缓存全量重同步。此前硬编码 1，
+	// 数据库重建后 Thunderbird 等客户端缓存永不失效（只下载"新增"的
+	// UID），表现为列表只剩少量邮件。
+	uidValidity, err := m.stores.MailboxState.UidValidity(m.user.id, m.name)
+	if err != nil {
+		log.Printf("IMAP: 获取 UIDVALIDITY 失败 folder=%s: %v", m.name, err)
+		uidValidity = 1
+	}
+	status.UidValidity = uidValidity
 
 	return status, nil
 }
@@ -394,7 +407,6 @@ func (m *imapMailbox) ListMessages(uid bool, seqset *imap.SeqSet, items []imap.F
 	if err != nil {
 		return err
 	}
-
 	if len(dbMessages) == 0 {
 		return nil
 	}
@@ -567,7 +579,6 @@ func (m *imapMailbox) SearchMessages(uid bool, criteria *imap.SearchCriteria) ([
 			}
 		}
 	}
-
 	return results, nil
 }
 

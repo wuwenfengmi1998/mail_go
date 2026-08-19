@@ -219,7 +219,7 @@ func (s *smtpSession) Auth(mech string) (sasl.Server, error) {
 			return smtp.ErrAuthFailed
 		}
 
-		user, err := s.backend.server.stores.Users.Authenticate(username, password)
+		user, err := s.backend.server.stores.Users.AuthenticateLogin(username, password)
 		if err != nil {
 			// 认证失败计数，达到阈值按档位封禁（与 Web 登录共用 ban_entries）
 			s.backend.server.stores.RecordAuthFailure(
@@ -231,6 +231,10 @@ func (s *smtpSession) Auth(mech string) (sasl.Server, error) {
 			s.recordFail("用户名或密码错误")
 			return smtp.ErrAuthFailed
 		}
+
+		// 登录成功清零失败计数（与 Web 登录一致）：防止合法用户 IP
+		// 因失败计数只增不减被反复误封。
+		s.backend.server.stores.Bans.ResetFail(s.clientIP)
 
 		domainName := user.Domain.Name
 		if domainName == "" {
