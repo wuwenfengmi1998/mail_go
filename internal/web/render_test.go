@@ -68,6 +68,27 @@ func TestRenderAllPages(t *testing.T) {
 		}},
 		{"settings", ginH{"currentUser": user, "activeFolder": "settings", "error": "", "success": "", "inboxUnread": int64(2), "draftsTotal": int64(1), "sentTotal": int64(3)}},
 		{"admin_dashboard", ginH{"currentUser": user, "activeFolder": "admin", "domainCount": 2, "userCount": 5, "totalMails": 100, "banCount": 1, "inboxCount": 50, "sentCount": 30, "draftsCount": 10, "trashCount": 5, "inboxSize": int64(1024), "sentSize": int64(512), "totalSize": int64(2048), "todayReceived": 3, "todaySent": 2, "weekReceived": 20, "weekSent": 15}},
+		{"admin_protocol_logs", ginH{
+			"currentUser": user, "activeFolder": "protocol-logs",
+			"logs": []db.ProtocolLog{
+				{ID: 1, Protocol: db.ProtocolSMTP, Port: 25, ClientIP: "203.0.113.7", Username: "", Success: true, FailReason: "", Detail: "MAIL FROM:<spam@evil.example> RCPT×1 本地投递1", MsgCount: 1, DurationMs: 1234, CreatedAt: now},
+				{ID: 2, Protocol: db.ProtocolIMAP, Port: 993, ClientIP: "203.0.113.9", Username: "admin", Success: false, FailReason: "用户名或密码错误", Detail: "LOGIN 失败", DurationMs: 88, CreatedAt: now.Add(-time.Minute)},
+				{ID: 3, Protocol: db.ProtocolPOP3, Port: 110, ClientIP: "10.0.0.2", Username: "alice", Success: true, FailReason: "", Detail: "USER PASS STAT RETR×3 QUIT", MsgCount: 3, DurationMs: 500, CreatedAt: now.Add(-2 * time.Minute)},
+			},
+			"total": 3, "page": 1, "pageSize": 50, "totalPages": 1,
+			"filter": map[string]string{"protocol": "smtp", "success": "fail", "ip": "203.0.113", "username": "", "from": "2026-08-01", "to": "2026-08-19"},
+			"todayStats": map[string]map[string]int{
+				db.ProtocolSMTP: {"success": 10, "fail": 2},
+				db.ProtocolIMAP: {"success": 5, "fail": 7},
+				db.ProtocolPOP3: {"success": 3, "fail": 4},
+			},
+			"allStats": map[string]map[string]int{
+				db.ProtocolSMTP: {"success": 100, "fail": 20},
+				db.ProtocolIMAP: {"success": 50, "fail": 70},
+				db.ProtocolPOP3: {"success": 30, "fail": 40},
+			},
+			"keepDays": 30,
+		}},
 	}
 
 	outDir := os.Getenv("MAILGO_PREVIEW_DIR")

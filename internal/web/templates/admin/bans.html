@@ -18,7 +18,8 @@
                 <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>用户管理</a>
                 <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>所有邮件</a>
                 <a href="/admin/outbound" {{if eq .activeFolder "outbound"}}class="active"{{end}}>外发队列</a>
-                <a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>IP黑名单</a>
+                                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>协议日志</a>
+<a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>IP黑名单</a>
             </div>
             <div class="content">
                 <div class="card">

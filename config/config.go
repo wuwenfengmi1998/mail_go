@@ -36,6 +36,9 @@ type WebConfig struct {
 	// 默认 true；仅当应用直接以 HTTP 提供服务（本地调试、内网明文）时
 	// 才应改为 false。
 	CookieSecure bool `toml:"cookie_secure"`
+	// ProtocolLogKeepDays SMTP/IMAP/POP3 协议调用日志保留天数，
+	// 超过该天数的记录会被后台任务自动清理。
+	ProtocolLogKeepDays int `toml:"protocol_log_keep_days"`
 }
 
 // SecretKeyEnvVar 是覆盖会话签名密钥的环境变量名。
@@ -197,8 +200,9 @@ func defaultConfig() *Config {
 			AttachDir: filepath.Join(bd, "attachments"),
 		},
 		Web: WebConfig{
-			Addr:         DefaultWebPort,
-			CookieSecure: true,
+			Addr:                DefaultWebPort,
+			CookieSecure:        true,
+			ProtocolLogKeepDays: DefaultProtocolLogKeepDays,
 		},
 		SMTP: SMTPConfig{
 			Addr:           fmt.Sprintf(":%d", DefaultSMTPPort),
@@ -261,6 +265,9 @@ func mergeDefaults(cfg *Config, defaults *Config) *Config {
 	}
 	if cfg.Web.Addr == "" {
 		cfg.Web.Addr = defaults.Web.Addr
+	}
+	if cfg.Web.ProtocolLogKeepDays == 0 {
+		cfg.Web.ProtocolLogKeepDays = defaults.Web.ProtocolLogKeepDays
 	}
 	if cfg.SMTP.Addr == "" {
 		cfg.SMTP.Addr = defaults.SMTP.Addr

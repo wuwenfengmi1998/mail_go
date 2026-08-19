@@ -28,14 +28,17 @@ import (
 type imapBackend struct {
 	stores *store.Stores
 	banCfg config.BanConfig
+	port   int
 }
 
 // Login authenticates a user by email and password.
 func (b *imapBackend) Login(connInfo *imap.ConnInfo, username, password string) (backend.User, error) {
 	clientIP := store.ClientIPFromAddr(connInfo.RemoteAddr)
+	now := time.Now()
 
 	// 已封禁 IP 一律拒绝认证（防协议层暴力破解）
 	if banned, _ := b.stores.Bans.IsBanned(clientIP); banned {
+		b.recordLogin(clientIP, username, false, "IP已被封禁", "认证被拒绝（IP 已封禁）", 0, now)
 		return nil, backend.ErrInvalidCredentials
 	}
 
@@ -43,6 +46,7 @@ func (b *imapBackend) Login(connInfo *imap.ConnInfo, username, password string) 
 	if err != nil {
 		// 认证失败计数，达到阈值封禁（与 Web 登录共用 ban_entries）
 		b.stores.RecordAuthFailure(clientIP, b.banCfg.MaxFailAttempts, b.banCfg.BanDurationMin)
+		b.recordLogin(clientIP, username, false, "用户名或密码错误", "LOGIN 失败", 0, now)
 		return nil, fmt.Errorf("invalid credentials: %w", err)
 	}
 
@@ -52,20 +56,48 @@ func (b *imapBackend) Login(connInfo *imap.ConnInfo, username, password string) 
 		email = user.Username + "@" + domain.Name
 	}
 
+	logID := b.recordLogin(clientIP, username, true, "", "LOGIN 成功", 0, now)
+
 	return &imapUser{
-		stores: b.stores,
-		id:     user.ID,
-		email:  email,
+		stores:    b.stores,
+		id:        user.ID,
+		email:     email,
+		logID:     logID,
+		clientIP:  clientIP,
+		startedAt: now,
 	}, nil
+}
+
+// recordLogin 写入一条 IMAP 登录日志，返回新记录的 ID（失败时为 0）。
+func (b *imapBackend) recordLogin(ip, username string, success bool, failReason, detail string, durationMs int64, at time.Time) uint {
+	entry := &db.ProtocolLog{
+		Protocol:   db.ProtocolIMAP,
+		Port:       b.port,
+		ClientIP:   ip,
+		Username:   username,
+		Success:    success,
+		FailReason: failReason,
+		Detail:     detail,
+		DurationMs: durationMs,
+		CreatedAt:  at,
+	}
+	if err := b.stores.ProtocolLogs.Create(entry); err != nil {
+		log.Printf("IMAP: 写入协议日志失败: %v", err)
+		return 0
+	}
+	return entry.ID
 }
 
 // ---------- imapUser ----------
 
 // imapUser implements backend.User.
 type imapUser struct {
-	stores *store.Stores
-	id     uint
-	email  string
+	stores    *store.Stores
+	id        uint
+	email     string
+	logID     uint
+	clientIP  string
+	startedAt time.Time
 }
 
 // Username returns the user's email address.
@@ -146,6 +178,14 @@ func (u *imapUser) RenameMailbox(existingName, newName string) error {
 
 // Logout is called when the user session ends.
 func (u *imapUser) Logout() error {
+	// 回填会话时长，登录记录在 Login 时已写入
+	if u.logID == 0 {
+		return nil
+	}
+	durationMs := time.Since(u.startedAt).Milliseconds()
+	if err := u.stores.ProtocolLogs.UpdateDuration(u.logID, durationMs); err != nil {
+		log.Printf("IMAP: 更新协议日志失败: %v", err)
+	}
 	return nil
 }
 

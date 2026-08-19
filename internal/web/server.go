@@ -59,7 +59,7 @@ func templateFuncs() template.FuncMap {
 		"add":     func(a, b int) int { return a + b },
 		"sub":     func(a, b int) int { return a - b },
 		"mul":     func(a, b int) int { return a * b },
-		"div":     func(a, b int) int { return a / b },
+		"div":     func(a, b int64) int64 { return a / b },
 		"mod":     func(a, b int) int { return a % b },
 		"ceilDiv": func(a, b int) int { return int(math.Ceil(float64(a) / float64(b))) },
 		"seq": func(n int) []int {
@@ -228,7 +228,7 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 func (ws *WebServer) registerRoutes() {
 	authHandler := handlers.NewAuthHandler(ws.stores, ws.authCfg, ws.banCfg)
 	mailHandler := handlers.NewMailHandler(ws.stores, ws.storage, ws.outbound)
-	adminHandler := handlers.NewAdminHandler(ws.stores, ws.storage, filepath.Join(ws.storageCfg.BaseDir, "tls", "domains"), ws.caddyDataDir, ws.outbound)
+	adminHandler := handlers.NewAdminHandler(ws.stores, ws.storage, filepath.Join(ws.storageCfg.BaseDir, "tls", "domains"), ws.caddyDataDir, ws.outbound, ws.cfg.ProtocolLogKeepDays)
 
 	// Apply BanMiddleware globally before public routes
 	ws.engine.Use(middleware.BanMiddleware(ws.stores))
@@ -297,6 +297,8 @@ func (ws *WebServer) registerRoutes() {
 		admin.GET("/bans", adminHandler.ListBans)
 		admin.POST("/bans/:id/unban", adminHandler.UnbanIP)
 		admin.POST("/bans/cleanup", adminHandler.CleanupBans)
+		admin.GET("/protocol-logs", adminHandler.ListProtocolLogs)
+		admin.POST("/protocol-logs/cleanup", adminHandler.CleanupProtocolLogs)
 	}
 }
 

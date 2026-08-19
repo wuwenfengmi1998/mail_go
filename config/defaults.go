@@ -36,5 +36,8 @@ const (
 	DefaultQuotaBytes int64 = 5 * 1024 * 1024 * 1024 // 5GB
 )
 
+// DefaultProtocolLogKeepDays 是 SMTP/IMAP/POP3 协议调用日志的默认保留天数。
+const DefaultProtocolLogKeepDays = 30
+
 // ConfigFileName is the name of the configuration file
 const ConfigFileName = "mail_go.toml"

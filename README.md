@@ -9,6 +9,7 @@ Web 前端采用 QQ 邮箱风格的布局：顶部导航 + 左侧文件夹栏 + 
 - **外部投递**：认证用户可向外部邮箱（QQ/Gmail/Outlook 等）发送邮件，内置外发队列、MX 直投、STARTTLS、指数退避重试、退信通知与 DKIM 签名
 - **Web 邮箱**：QQ 邮箱风格界面，支持收件箱 / 已发送 / 草稿箱、未读角标与搜索过滤、全选 / 批量删除、发件人头像、富文本编辑（Quill.js）、附件上传/下载
 - **管理后台**：域名管理、用户管理、DKIM 密钥自动生成、DNS 配置提示、全量邮件查看、外发队列管理、IP 封禁管理、仪表盘统计
+- **协议调用日志**：SMTP / IMAP / POP3 每次连接自动记录来源 IP、用户名、成功/失败、失败原因与操作摘要，可按协议/状态/IP/用户名/时间筛选，用于分析密码爆破、中继滥用等攻击行为（默认保留 30 天，自动清理）
 - **外部认证**：OAuth2（Google / GitHub）、LDAP（可选，默认关闭）
 - **安全机制**：BCrypt 密码哈希、登录失败自动封禁 IP、外发频率限制（防滥用）、非认证禁止中继（防开放中继）、管理员可解封
 - **多数据库**：默认 SQLite，可切换 MySQL
@@ -87,6 +88,8 @@ secret_key = ""                             # Web 会话签名密钥；留空时
                                            # 分别意味着会话可被伪造/所有登录态失效）
 cookie_secure = true                        # 会话 cookie 仅通过 HTTPS 传输（Secure 标志）；
                                            # 仅本地 HTTP 调试时才改为 false
+protocol_log_keep_days = 30                # SMTP/IMAP/POP3 协议调用日志保留天数，
+                                           # 超出后由后台任务自动清理；0 表示不清理
 
 [smtp]
 addr = ":25"                               # SMTP 明文端口
@@ -383,7 +386,8 @@ mailgo/
 │   │   ├── domain_store.go          # 域名数据操作
 │   │   ├── attachment_store.go      # 附件数据操作
 │   │   ├── outbound_store.go        # 外发队列数据操作
-│   │   └── ban_store.go             # 封禁数据操作
+│   │   ├── ban_store.go             # 封禁数据操作
+│   │   └── protocol_log_store.go    # 协议调用日志数据操作
 │   ├── smtp_server/server.go        # SMTP 服务
 │   ├── outbound/
 │   │   ├── mailer.go               # MX 查询与 SMTP 出站客户端

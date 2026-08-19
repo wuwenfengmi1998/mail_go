@@ -4,6 +4,8 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log"
+	"net"
+	"strconv"
 
 	"mail_go/config"
 	"mail_go/internal/store"
@@ -42,12 +44,25 @@ func (s *IMAPServer) tlsConfig() (*tls.Config, error) {
 
 // newServer creates a configured imapserver.Server with the given address.
 func (s *IMAPServer) newServer(addr string, tlsConfig *tls.Config) *imapserver.Server {
-	be := &imapBackend{stores: s.stores, banCfg: s.banCfg}
+	be := &imapBackend{stores: s.stores, banCfg: s.banCfg, port: portOf(addr)}
 	srv := imapserver.New(be)
 	srv.Addr = addr
 	srv.TLSConfig = tlsConfig
 	srv.AllowInsecureAuth = tlsConfig == nil
 	return srv
+}
+
+// portOf 从监听地址解析端口号，失败返回 0。
+func portOf(addr string) int {
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0
+	}
+	return port
 }
 
 // Start starts the IMAP server on the plain-text port.

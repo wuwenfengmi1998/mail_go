@@ -302,8 +302,30 @@ func main() {
 		}
 	}()
 
+	// 11. 后台定期清理过期的协议调用日志（SMTP/IMAP/POP3）
+	startProtocolLogCleaner(stores, cfg.Web.ProtocolLogKeepDays)
+
 	fmt.Println("MailGo 邮件系统启动完成")
 	select {} // Block main goroutine
+}
+
+// startProtocolLogCleaner 每 6 小时清理一次超出保留天数的协议调用日志。
+// keepDays <= 0 表示不清理。
+func startProtocolLogCleaner(stores *store.Stores, keepDays int) {
+	if keepDays <= 0 {
+		return
+	}
+	go func() {
+		for {
+			n, err := stores.ProtocolLogs.CleanupBefore(time.Now().AddDate(0, 0, -keepDays))
+			if err != nil {
+				log.Printf("清理协议日志失败: %v", err)
+			} else if n > 0 {
+				log.Printf("已清理 %d 条过期协议日志（保留 %d 天）", n, keepDays)
+			}
+			time.Sleep(6 * time.Hour)
+		}
+	}()
 }
 
 // ensureAdminUser checks if an admin user exists and creates one if not.
@@ -353,14 +375,14 @@ func ensureAdminUser(stores *store.Stores, cfg *config.Config) {
 
 	// Create the admin user
 	adminUser := &db.User{
-		Username:             "admin",
-		PasswordHash:         string(hashedPassword),
-		DomainID:             domain.ID,
-		QuotaBytes:           5 * 1024 * 1024 * 1024, // 5GB
-		UsedBytes:            0,
-		IsActive:             true,
-		IsAdmin:              true,
-		MustChangePassword:   true,
+		Username:           "admin",
+		PasswordHash:       string(hashedPassword),
+		DomainID:           domain.ID,
+		QuotaBytes:         5 * 1024 * 1024 * 1024, // 5GB
+		UsedBytes:          0,
+		IsActive:           true,
+		IsAdmin:            true,
+		MustChangePassword: true,
 	}
 
 	if createErr := stores.Users.Create(adminUser); createErr != nil {

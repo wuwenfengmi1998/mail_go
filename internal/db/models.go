@@ -122,6 +122,34 @@ type BanEntry struct {
 // TableName specifies the table name for BanEntry.
 func (BanEntry) TableName() string { return "ban_entries" }
 
+// Protocol log statuses.
+const (
+	ProtocolSMTP = "smtp"
+	ProtocolIMAP = "imap"
+	ProtocolPOP3 = "pop3"
+)
+
+// ProtocolLog records one SMTP/IMAP/POP3 connection session: auth result,
+// failure reason and source IP, for admin analysis of attacks/abuse.
+type ProtocolLog struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	Protocol   string    `gorm:"size:16;index;not null" json:"protocol"` // smtp | imap | pop3
+	Port       int       `json:"port"`                                   // 25/465/587/143/993/110/995
+	ClientIP   string    `gorm:"size:64;index;not null" json:"client_ip"`
+	Username   string    `gorm:"size:255;index" json:"username"`
+	Success    bool      `gorm:"index" json:"success"`
+	FailReason string    `gorm:"size:512" json:"fail_reason"`
+	Detail     string    `gorm:"size:2048" json:"detail"`
+	MsgCount   int       `json:"msg_count"`
+	DurationMs int64     `json:"duration_ms"`
+	CreatedAt  time.Time `gorm:"index" json:"created_at"`
+}
+
+// TableName specifies the table name for ProtocolLog.
+func (ProtocolLog) TableName() string {
+	return "protocol_logs"
+}
+
 // Attachment represents a file attached to an email message.
 type Attachment struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`

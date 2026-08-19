@@ -30,12 +30,14 @@ type AdminHandler struct {
 	tlsDir       string
 	caddyDataDir string
 	outbound     *outbound.Manager
+	// protocolLogKeepDays SMTP/IMAP/POP3 协议日志保留天数（配置文件 [web]）
+	protocolLogKeepDays int
 }
 
 // NewAdminHandler creates a new AdminHandler with the given stores, attachment
 // storage, TLS directory, Caddy data directory and outbound delivery manager.
-func NewAdminHandler(stores *store.Stores, attStorage *storage.AttachmentStorage, tlsDir string, caddyDataDir string, ob *outbound.Manager) *AdminHandler {
-	return &AdminHandler{stores: stores, storage: attStorage, tlsDir: tlsDir, caddyDataDir: caddyDataDir, outbound: ob}
+func NewAdminHandler(stores *store.Stores, attStorage *storage.AttachmentStorage, tlsDir string, caddyDataDir string, ob *outbound.Manager, protocolLogKeepDays int) *AdminHandler {
+	return &AdminHandler{stores: stores, storage: attStorage, tlsDir: tlsDir, caddyDataDir: caddyDataDir, outbound: ob, protocolLogKeepDays: protocolLogKeepDays}
 }
 
 // Dashboard renders the admin dashboard with summary statistics.
@@ -771,6 +773,111 @@ func (h *AdminHandler) UnbanIP(c *gin.Context) {
 func (h *AdminHandler) CleanupBans(c *gin.Context) {
 	h.stores.Bans.Cleanup()
 	c.Redirect(http.StatusFound, "/admin/bans")
+}
+
+// ListProtocolLogs 渲染协议调用日志页（SMTP/IMAP/POP3 调用记录，支持筛选）。
+func (h *AdminHandler) ListProtocolLogs(c *gin.Context) {
+	// 页面访问时顺带清理过期日志，避免日志表无限增长
+	h.stores.ProtocolLogs.CleanupBefore(time.Now().AddDate(0, 0, -h.protocolLogKeepDays))
+
+	page := getPageParam(c, "page", 1)
+	pageSize := 50
+
+	var success *bool
+	switch c.Query("success") {
+	case "success":
+		v := true
+		success = &v
+	case "fail":
+		v := false
+		success = &v
+	}
+
+	from := parseDateQuery(c.Query("from"))
+	to := parseDateQuery(c.Query("to"))
+	// 日期选择到天，含当天
+	if !to.IsZero() {
+		to = to.AddDate(0, 0, 1)
+	}
+
+	filter := store.ProtocolLogFilter{
+		Protocol: c.Query("protocol"),
+		Success:  success,
+		IP:       strings.TrimSpace(c.Query("ip")),
+		Username: strings.TrimSpace(c.Query("username")),
+		From:     from,
+		To:       to,
+	}
+
+	logs, total, err := h.stores.ProtocolLogs.List(page, pageSize, filter)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "加载协议日志失败: %v", err)
+		return
+	}
+
+	// 统计卡片：今日 + 全部成功/失败数（按协议），int64 → int 供模板 add 使用
+	dayStart := time.Now().Truncate(24 * time.Hour)
+	todayStats, _ := h.stores.ProtocolLogs.CountStats(dayStart)
+	allStats, _ := h.stores.ProtocolLogs.CountStats(time.Time{})
+	normStats := func(m map[string]map[string]int64) map[string]map[string]int {
+		out := make(map[string]map[string]int, len(m))
+		for proto, counts := range m {
+			out[proto] = map[string]int{"success": int(counts["success"]), "fail": int(counts["fail"])}
+		}
+		return out
+	}
+
+	currentUser, _ := c.Get("currentUser")
+
+	totalPages := int(total) / pageSize
+	if int(total)%pageSize > 0 {
+		totalPages++
+	}
+	if totalPages < 1 {
+		totalPages = 0
+	}
+
+	// 分页/筛选链接保留当前筛选条件（URL 编码防止特殊字符破坏链接）
+	query := map[string]string{
+		"protocol": url.QueryEscape(filter.Protocol),
+		"success":  url.QueryEscape(c.Query("success")),
+		"ip":       url.QueryEscape(filter.IP),
+		"username": url.QueryEscape(filter.Username),
+		"from":     url.QueryEscape(c.Query("from")),
+		"to":       url.QueryEscape(c.Query("to")),
+	}
+
+	c.HTML(200, "admin_protocol_logs", gin.H{
+		"currentUser":  currentUser,
+		"logs":         logs,
+		"total":        total,
+		"page":         page,
+		"pageSize":     pageSize,
+		"totalPages":   totalPages,
+		"filter":       query,
+		"todayStats":   normStats(todayStats),
+		"allStats":     normStats(allStats),
+		"keepDays":     h.protocolLogKeepDays,
+		"activeFolder": "protocol-logs",
+	})
+}
+
+// CleanupProtocolLogs 手动清理超出保留天数的协议日志。
+func (h *AdminHandler) CleanupProtocolLogs(c *gin.Context) {
+	_, _ = h.stores.ProtocolLogs.CleanupBefore(time.Now().AddDate(0, 0, -h.protocolLogKeepDays))
+	c.Redirect(http.StatusFound, "/admin/protocol-logs")
+}
+
+// parseDateQuery 解析 YYYY-MM-DD 日期，失败返回零值。
+func parseDateQuery(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.ParseInLocation("2006-01-02", s, time.Local)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 // ListMails renders the admin mail list page showing all messages across all users.

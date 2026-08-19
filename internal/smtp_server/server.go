@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -113,7 +115,29 @@ func (be *smtpBackend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 		mode:      be.mode,
 		rcpts:     make([]string, 0),
 		clientIP:  store.ClientIPFromAddr(c.Conn().RemoteAddr()),
+		startedAt: time.Now(),
+		port:      be.server.sessionPort(be.mode),
 	}, nil
+}
+
+// sessionPort 返回该会话监听的端口号（区分明文/TLS/提交端口），解析失败返回 0。
+func (s *SMTPServer) sessionPort(mode smtpMode) int {
+	addr := s.cfg.Addr
+	switch mode {
+	case smtpModeSubmission:
+		addr = s.cfg.SubmissionAddr
+	case smtpModeImplicitTLS:
+		addr = s.cfg.TLSAddr
+	}
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0
+	}
+	return port
 }
 
 // smtpSession implements the smtp.Session interface for handling a single connection.
@@ -129,6 +153,16 @@ type smtpSession struct {
 	email         string
 	user          *db.User
 	clientIP      string
+
+	// 会话日志累积状态
+	startedAt    time.Time
+	port         int
+	authTried    bool
+	authOK       bool
+	authUsername string
+	failReason   string // 首个失败原因
+	msgCount     int    // 成功处理的邮件数（本地投递 + 外发队列）
+	detailParts  []string
 }
 
 // AuthMechanisms returns supported SMTP AUTH mechanisms.
@@ -136,14 +170,30 @@ func (s *smtpSession) AuthMechanisms() []string {
 	return []string{sasl.Plain}
 }
 
+// recordFail 记录会话中第一个失败原因（日志用途，不改变协议行为）。
+func (s *smtpSession) recordFail(reason string) {
+	if s.failReason == "" {
+		s.failReason = reason
+	}
+}
+
+// recordDetail 追加一条操作摘要。
+func (s *smtpSession) recordDetail(part string) {
+	s.detailParts = append(s.detailParts, part)
+}
+
 // Auth authenticates the user with SASL PLAIN credentials.
 func (s *smtpSession) Auth(mech string) (sasl.Server, error) {
 	if mech != sasl.Plain {
+		s.recordFail("不支持的认证机制")
 		return nil, smtp.ErrAuthUnknownMechanism
 	}
 	return sasl.NewPlainServer(func(identity, username, password string) error {
+		s.authTried = true
+		s.authUsername = username
 		// 已封禁 IP 一律拒绝认证（防协议层暴力破解）
 		if banned, _ := s.backend.server.stores.Bans.IsBanned(s.clientIP); banned {
+			s.recordFail("IP已被封禁")
 			return smtp.ErrAuthFailed
 		}
 
@@ -155,6 +205,7 @@ func (s *smtpSession) Auth(mech string) (sasl.Server, error) {
 				s.backend.server.banCfg.MaxFailAttempts,
 				s.backend.server.banCfg.BanDurationMin,
 			)
+			s.recordFail("用户名或密码错误")
 			return smtp.ErrAuthFailed
 		}
 
@@ -166,10 +217,12 @@ func (s *smtpSession) Auth(mech string) (sasl.Server, error) {
 			}
 		}
 		if domainName == "" {
+			s.recordFail("用户名或密码错误")
 			return smtp.ErrAuthFailed
 		}
 
 		s.authenticated = true
+		s.authOK = true
 		s.userID = user.ID
 		s.user = user
 		s.email = user.Username + "@" + domainName
@@ -180,10 +233,12 @@ func (s *smtpSession) Auth(mech string) (sasl.Server, error) {
 // Mail records the sender address (MAIL FROM command).
 func (s *smtpSession) Mail(from string, opts *smtp.MailOptions) error {
 	if s.mode != smtpModeInbound && !s.authenticated {
+		s.recordFail("未认证用户尝试发信")
 		return smtp.ErrAuthRequired
 	}
 	// Authenticated users may only send as themselves, preventing spoofing.
 	if s.authenticated && !strings.EqualFold(strings.TrimSpace(from), s.email) {
+		s.recordFail("发件人地址与登录用户不一致")
 		return fmt.Errorf("sender address must match authenticated user")
 	}
 
@@ -201,6 +256,7 @@ func (s *smtpSession) Mail(from string, opts *smtp.MailOptions) error {
 func (s *smtpSession) Rcpt(to string, opts *smtp.RcptOptions) error {
 	to = strings.TrimSpace(to)
 	if to == "" {
+		s.recordFail("无效的收件人地址")
 		return fmt.Errorf("invalid recipient address: %s", to)
 	}
 
@@ -212,12 +268,14 @@ func (s *smtpSession) Rcpt(to string, opts *smtp.RcptOptions) error {
 
 	// External recipient: only authenticated local users may relay.
 	if !s.authenticated {
+		s.recordFail("中继访问被拒绝")
 		return fmt.Errorf("relay access denied: %s", to)
 	}
 
 	// Sender verification must have been enforced in Mail() already.
 	ob := s.backend.server.outbound
 	if ob == nil || !ob.Enabled() {
+		s.recordFail("外部投递未启用")
 		return fmt.Errorf("external delivery is disabled: %s", to)
 	}
 
@@ -235,20 +293,24 @@ func (s *smtpSession) localUserByEmail(email string) (*db.User, error) {
 // outbound delivery.
 func (s *smtpSession) Data(r io.Reader) error {
 	if len(s.rcpts) == 0 {
+		s.recordFail("未指定收件人")
 		return fmt.Errorf("no accepted recipients")
 	}
 
 	data, err := io.ReadAll(r)
 	if err != nil {
+		s.recordFail("读取邮件数据失败")
 		return fmt.Errorf("failed to read message data: %w", err)
 	}
 
 	parsed, err := parseSMTPMessage(data)
 	if err != nil {
+		s.recordFail("邮件格式解析失败")
 		return err
 	}
 
 	// Local recipients: deliver to INBOX.
+	localDelivered := 0
 	for _, rcpt := range s.localRcpts {
 		user, err := s.localUserByEmail(rcpt)
 		if err != nil {
@@ -260,25 +322,33 @@ func (s *smtpSession) Data(r io.Reader) error {
 			continue
 		}
 		log.Printf("SMTP: message delivered to %s", rcpt)
+		localDelivered++
 	}
+	s.msgCount += localDelivered
 
 	// External recipients: queue for outbound delivery.
+	externalQueued := 0
 	if len(s.externalRcpts) > 0 {
 		ob := s.backend.server.outbound
 		if ob == nil {
+			s.recordFail("外部投递服务不可用")
 			return fmt.Errorf("outbound delivery is unavailable")
 		}
 		maxRcpt := ob.MaxRecipients()
 		if maxRcpt > 0 && len(s.externalRcpts) > maxRcpt {
+			s.recordFail("外部收件人数量超出限制")
 			return fmt.Errorf("too many external recipients: %d (max %d)", len(s.externalRcpts), maxRcpt)
 		}
 		for _, rcpt := range s.externalRcpts {
 			if _, err := ob.Enqueue(s.user, s.email, rcpt, data); err != nil {
+				s.recordFail("外发队列投递失败")
 				return fmt.Errorf("failed to queue external recipient %s: %v", rcpt, err)
 			}
 			log.Printf("SMTP: external message queued for %s", rcpt)
+			externalQueued++
 		}
 	}
+	s.msgCount += externalQueued
 
 	if s.authenticated && s.userID != 0 && s.mode != smtpModeInbound {
 		if err := s.saveMessage(s.userID, "Sent", parsed, data, true); err != nil {
@@ -286,6 +356,8 @@ func (s *smtpSession) Data(r io.Reader) error {
 		}
 	}
 
+	s.recordDetail(fmt.Sprintf("MAIL FROM:<%s> RCPT×%d 本地投递%d 外发%d",
+		s.from, len(s.rcpts), localDelivered, externalQueued))
 	return nil
 }
 
@@ -434,5 +506,46 @@ func (s *smtpSession) Reset() {
 
 // Logout is called when the SMTP connection is closed.
 func (s *smtpSession) Logout() error {
+	s.writeProtocolLog()
 	return nil
+}
+
+// writeProtocolLog 汇总本会话状态写入协议调用日志（供后台分析攻击/滥用）。
+func (s *smtpSession) writeProtocolLog() {
+	success := s.failReason == ""
+	detail := strings.Join(s.detailParts, "; ")
+	username := s.authUsername
+	if username == "" && s.email != "" {
+		username = s.email
+	}
+	if detail == "" {
+		if s.authTried {
+			if s.authOK {
+				detail = "AUTH 成功"
+			} else {
+				detail = "AUTH 失败"
+			}
+		} else if success {
+			detail = "连接建立，无邮件操作"
+		}
+	}
+	if success && s.authTried && !s.authOK {
+		success = false
+	}
+
+	entry := &db.ProtocolLog{
+		Protocol:   db.ProtocolSMTP,
+		Port:       s.port,
+		ClientIP:   s.clientIP,
+		Username:   username,
+		Success:    success,
+		FailReason: s.failReason,
+		Detail:     detail,
+		MsgCount:   s.msgCount,
+		DurationMs: time.Since(s.startedAt).Milliseconds(),
+		CreatedAt:  time.Now(),
+	}
+	if err := s.backend.server.stores.ProtocolLogs.Create(entry); err != nil {
+		log.Printf("SMTP: 写入协议日志失败: %v", err)
+	}
 }
