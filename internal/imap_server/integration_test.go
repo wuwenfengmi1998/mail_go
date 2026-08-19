@@ -1,10 +1,6 @@
-//go:build !race
-
-// 集成测试：启动真实 IMAP 监听 + 脚本客户端（go-imap client）。
-// 注意：仅在非 -race 构建下运行——go-imap v1.2.1 存在库内数据竞争
-// （cmd_selected.go STORE 写 *conn.silent() vs listenUpdates 读），
-// 启用 backend 推送（Updates != nil）时必然触发，-race 下会误报。
-// 推送逻辑的竞态覆盖由单元测试（notify_test.go）承担。
+// 集成测试：启动真实 IMAP 监听 + 脚本客户端（go-imap v2 imapclient）。
+// v2 库为 race-clean（此前 v1.2.1 库内数据竞争导致本文件必须带
+// !race 构建标签，升级后已移除）。推送逻辑的单元覆盖由 notify_test.go 承担。
 package imap_server
 
 import (
@@ -18,8 +14,8 @@ import (
 	"mail_go/internal/db"
 	"mail_go/internal/store"
 
-	"github.com/emersion/go-imap"
-	"github.com/emersion/go-imap/client"
+	"github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapclient"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -32,7 +28,7 @@ func startIntegrationServer(t *testing.T) (*store.Stores, string) {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := gdb.AutoMigrate(&db.User{}, &db.Domain{}, &db.Message{}, &db.ProtocolLog{}, &db.BanEntry{}); err != nil {
+	if err := gdb.AutoMigrate(&db.User{}, &db.Domain{}, &db.Message{}, &db.ProtocolLog{}, &db.BanEntry{}, &db.MailboxState{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	stores := store.NewStores(gdb)
@@ -83,23 +79,22 @@ func seedMailbox(t *testing.T, stores *store.Stores, userID uint, n int) []uint 
 	return ids
 }
 
-func loginAndSelect(t *testing.T, addr string) *client.Client {
+func loginAndSelect(t *testing.T, addr string) *imapclient.Client {
 	t.Helper()
-	c, err := client.Dial(addr)
+	c, err := imapclient.DialInsecure(addr, nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	t.Cleanup(func() { c.Logout() })
-	if err := c.Login("alice@example.com", "secret123"); err != nil {
+	t.Cleanup(func() { c.Logout().Wait() })
+	if err := c.Login("alice@example.com", "secret123").Wait(); err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	if _, err := c.Select("INBOX", false); err != nil {
+	if _, err := c.Select("INBOX", nil).Wait(); err != nil {
 		t.Fatalf("select: %v", err)
 	}
 	return c
 }
 
-// uidOf returns the message id of the newest message by date.
 func assertReadState(t *testing.T, stores *store.Stores, msgID uint, want bool) {
 	t.Helper()
 	msg, err := stores.Mails.GetByID(msgID)
@@ -117,13 +112,13 @@ func TestUidStorePersists(t *testing.T) {
 	ids := seedMailbox(t, stores, 1, 3)
 
 	c := loginAndSelect(t, addr)
-	seqset := new(imap.SeqSet)
-	seqset.AddNum(uint32(ids[1])) // UID = 第二条消息
-	ch := make(chan *imap.Message, 1)
-	if err := c.UidStore(seqset, imap.AddFlags, []interface{}{imap.SeenFlag}, ch); err != nil {
+	cmd := c.Store(imap.UIDSetNum(imap.UID(ids[1])), &imap.StoreFlags{
+		Op:    imap.StoreFlagsAdd,
+		Flags: []imap.Flag{imap.FlagSeen},
+	}, nil)
+	if _, err := cmd.Collect(); err != nil {
 		t.Fatalf("uid store: %v", err)
 	}
-	<-ch
 
 	assertReadState(t, stores, ids[1], true)
 	assertReadState(t, stores, ids[0], false)
@@ -139,15 +134,13 @@ func TestSeqStoreServerIssued(t *testing.T) {
 	c := loginAndSelect(t, addr)
 
 	// 拉取全部消息，找到 ids[2]（最新一封）的服务器序号
-	seqsetAll := new(imap.SeqSet)
-	seqsetAll.AddRange(1, 3)
-	messages := make(chan *imap.Message, 3)
-	if err := c.Fetch(seqsetAll, []imap.FetchItem{imap.FetchFlags, imap.FetchUid}, messages); err != nil {
+	msgs, err := c.Fetch(imap.SeqSetNum(1, 2, 3), &imap.FetchOptions{UID: true}).Collect()
+	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
 	var targetSeq uint32
-	for m := range messages {
-		if m.Uid == uint32(ids[2]) {
+	for _, m := range msgs {
+		if m.UID == imap.UID(ids[2]) {
 			targetSeq = m.SeqNum
 		}
 	}
@@ -155,13 +148,13 @@ func TestSeqStoreServerIssued(t *testing.T) {
 		t.Fatal("target message not found in fetch")
 	}
 
-	seqset := new(imap.SeqSet)
-	seqset.AddNum(targetSeq)
-	ch := make(chan *imap.Message, 1)
-	if err := c.Store(seqset, imap.AddFlags, []interface{}{imap.SeenFlag}, ch); err != nil {
+	cmd := c.Store(imap.SeqSetNum(targetSeq), &imap.StoreFlags{
+		Op:    imap.StoreFlagsAdd,
+		Flags: []imap.Flag{imap.FlagSeen},
+	}, nil)
+	if _, err := cmd.Collect(); err != nil {
 		t.Fatalf("store: %v", err)
 	}
-	<-ch
 
 	assertReadState(t, stores, ids[2], true)
 }
@@ -177,13 +170,13 @@ func TestSeqStoreClientSelfNumbered(t *testing.T) {
 	c := loginAndSelect(t, addr)
 
 	// 客户端按日期倒序视图：最新一封 = seq 1
-	seqset := new(imap.SeqSet)
-	seqset.AddNum(1)
-	ch := make(chan *imap.Message, 1)
-	if err := c.Store(seqset, imap.AddFlags, []interface{}{imap.SeenFlag}, ch); err != nil {
+	cmd := c.Store(imap.SeqSetNum(1), &imap.StoreFlags{
+		Op:    imap.StoreFlagsAdd,
+		Flags: []imap.Flag{imap.FlagSeen},
+	}, nil)
+	if _, err := cmd.Collect(); err != nil {
 		t.Fatalf("store: %v", err)
 	}
-	<-ch
 
 	// 客户端意图是标记最新一封（ids[2]）为已读
 	assertReadState(t, stores, ids[2], true)
@@ -191,14 +184,12 @@ func TestSeqStoreClientSelfNumbered(t *testing.T) {
 
 // TestFetchBodyMalformedMIME 回归：消息包含无法解析的 MIME（base64 编码的
 // message/rfc822 附件 / 截断的 multipart）时，FETCH BODY/BODYSTRUCTURE
-// 不得因 nil BodyStructure 触发服务器 panic（否则连接中断，客户端只收到
-// 部分邮件或一直卡在同步）。修复前 go-imap send() 协程会 nil 指针崩溃。
+// 不得 panic（v2 的 ExtractBodyStructure 对畸形 MIME 返回降级结构，
+// WriteBodyStructure 要求 Extended 非 nil，两者都需满足）。
 func TestFetchBodyMalformedMIME(t *testing.T) {
 	stores, addr := startIntegrationServer(t)
 
-	// 1) base64 编码的 message/rfc822 附件（转发邮件场景）：
-	//    backendutil.FetchBodyStructure 不解码 base64，直接把编码文本
-	//    当嵌套消息头解析 → "malformed MIME header line" 错误。
+	// 1) base64 编码的 message/rfc822 附件（转发邮件场景）
 	rfc822Body := "UmVjZWl2ZWQ6IGZyb20gb3V0Ym91bmQuY2kuaWNsb3VkLmNvbSAodW5rbm93biBbMTI3LjAuMC4yKVxuXHQgYnkgcDAwLWljbG91ZG10YS1hc210cC11cy1jZW50cmFsLTFrLTEwMC1wZXJjZW50LTggKFBvc3RmaXgpIHdpdGggRVNNVFBTIGlkIDIxRTlBMThDQURDRjM4MlxuXHQgZm9yIDxkc2hAbG12ZS5uZXQ+OyBTdW4sIDE2IEF1ZyAyMDI2IDEzOjU4OjIxICswMDAwIChVVEMpXG5YLUlDTC1SZXBJZDogRURWY1BlQ3RlWG4tZ0Z1T0xxUWhfSjZvcE9fN1B2OEtsOW1mMDg2VUFxZ29zXG5EYXRlOiBTdW4sIDE2IEF1ZyAyMDI2IDEzOjU4OjIxICswMDAwXG5Gcm9tOiBkYXZpZEB5YW5kZXguY29tXG5UbzogZHNoQGxtdmUubmV0XG5NZXNzYWdlLUlEOiA8QTIxNzBEMTEtMkI1MC00MTQwLTlEQTMtMkI3M0U2RUIwQTc4QHlhbmRleC5jb20+XG5TdWJqZWN0OiB0ZXN0XG5cbmhlbGxvXG4="
 	msgWithRFC822 := &db.Message{
 		UserID:   1,
@@ -224,7 +215,7 @@ func TestFetchBodyMalformedMIME(t *testing.T) {
 			rfc822Body + "\r\n" +
 			"--==fwd==--\r\n",
 	}
-	// 2) 截断的 multipart（缺少结束边界）：BODYSTRUCTURE(extended) 解析报错
+	// 2) 截断的 multipart（缺少结束边界）
 	msgTruncated := &db.Message{
 		UserID:   1,
 		Folder:   "INBOX",
@@ -251,32 +242,138 @@ func TestFetchBodyMalformedMIME(t *testing.T) {
 
 	c := loginAndSelect(t, addr)
 
-	seqset := new(imap.SeqSet)
-	seqset.AddRange(1, 2)
+	seqSet := imap.SeqSetNum(1, 2)
 
-	// BODY：历史上 message/rfc822 消息解析失败 → nil BodyStructure → panic
-	msgs := make(chan *imap.Message, 10)
-	if err := c.Fetch(seqset, []imap.FetchItem{imap.FetchBody}, msgs); err != nil {
+	// BODY（非扩展）
+	msgs, err := c.Fetch(seqSet, &imap.FetchOptions{BodyStructure: &imap.FetchItemBodyStructure{}}).Collect()
+	if err != nil {
 		t.Fatalf("fetch body: %v", err)
 	}
-	got := 0
-	for range msgs {
-		got++
-	}
-	if got != 2 {
-		t.Fatalf("FETCH BODY 返回 %d/2 封", got)
+	if len(msgs) != 2 {
+		t.Fatalf("FETCH BODY 返回 %d/2 封", len(msgs))
 	}
 
-	// BODYSTRUCTURE：截断 multipart 在 extended 解析时报错 → nil → panic
-	msgs2 := make(chan *imap.Message, 10)
-	if err := c.Fetch(seqset, []imap.FetchItem{imap.FetchBodyStructure}, msgs2); err != nil {
+	// BODYSTRUCTURE（扩展）
+	msgs2, err := c.Fetch(seqSet, &imap.FetchOptions{BodyStructure: &imap.FetchItemBodyStructure{Extended: true}}).Collect()
+	if err != nil {
 		t.Fatalf("fetch bodystructure: %v", err)
 	}
-	got2 := 0
-	for range msgs2 {
-		got2++
+	if len(msgs2) != 2 {
+		t.Fatalf("FETCH BODYSTRUCTURE 返回 %d/2 封", len(msgs2))
 	}
-	if got2 != 2 {
-		t.Fatalf("FETCH BODYSTRUCTURE 返回 %d/2 封", got2)
+}
+
+// TestUidExpungeDeleteFlow 核心回归：模拟 Apple Mail / iOS Mail 的删除流程
+// （UID COPY → Trash + UID STORE \Deleted + UID EXPUNGE）。修复前：
+// \Deleted 只存内存会话、UID EXPUNGE 不被 go-imap v1 支持 → 原邮件留在
+// INBOX，垃圾桶只有副本。修复后：原邮件被真正删除，Trash 留有一份副本。
+func TestUidExpungeDeleteFlow(t *testing.T) {
+	stores, addr := startIntegrationServer(t)
+	ids := seedMailbox(t, stores, 1, 3)
+	uid := imap.UID(ids[1])
+
+	c := loginAndSelect(t, addr)
+
+	// 1) UID COPY → Trash
+	if _, err := c.Copy(imap.UIDSetNum(uid), "Trash").Wait(); err != nil {
+		t.Fatalf("uid copy: %v", err)
+	}
+
+	// 2) UID STORE +FLAGS.SILENT (\Deleted)
+	if _, err := c.Store(imap.UIDSetNum(uid), &imap.StoreFlags{
+		Op:     imap.StoreFlagsAdd,
+		Silent: true,
+		Flags:  []imap.Flag{imap.FlagDeleted},
+	}, nil).Collect(); err != nil {
+		t.Fatalf("uid store deleted: %v", err)
+	}
+
+	// 3) UID EXPUNGE
+	seqs, err := c.UIDExpunge(imap.UIDSetNum(uid)).Collect()
+	if err != nil {
+		t.Fatalf("uid expunge: %v", err)
+	}
+	if len(seqs) != 1 {
+		t.Fatalf("uid expunge seqs = %v, want 1 条", seqs)
+	}
+
+	// 原邮件必须被真正删除
+	if _, err := stores.Mails.GetByID(ids[1]); err == nil {
+		t.Fatal("原邮件仍在数据库，UID EXPUNGE 未生效")
+	}
+	// 其余邮件保留
+	assertReadState(t, stores, ids[0], false)
+	assertReadState(t, stores, ids[2], false)
+	// Trash 中有一份副本
+	trashCount, err := stores.Mails.CountByUserAndFolder(1, "Trash")
+	if err != nil || trashCount != 1 {
+		t.Fatalf("Trash count = %d, want 1", trashCount)
+	}
+}
+
+// TestDeletedPersistsAcrossSessions 验证 \Deleted 落库：标记后断开重连
+// （模拟客户端切换文件夹/重连），普通 EXPUNGE 仍能删除。修复前标记只存
+// 内存会话对象，重连后 EXPUNGE 什么都不删。
+func TestDeletedPersistsAcrossSessions(t *testing.T) {
+	stores, addr := startIntegrationServer(t)
+	ids := seedMailbox(t, stores, 1, 3)
+	uid := imap.UID(ids[1])
+
+	c := loginAndSelect(t, addr)
+	if _, err := c.Store(imap.UIDSetNum(uid), &imap.StoreFlags{
+		Op:     imap.StoreFlagsAdd,
+		Silent: true,
+		Flags:  []imap.Flag{imap.FlagDeleted},
+	}, nil).Collect(); err != nil {
+		t.Fatalf("uid store deleted: %v", err)
+	}
+	if err := c.Logout().Wait(); err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+
+	// 重新连接（新的会话对象，此前标记必须仍在库中）
+	c2, err := imapclient.DialInsecure(addr, nil)
+	if err != nil {
+		t.Fatalf("dial2: %v", err)
+	}
+	t.Cleanup(func() { c2.Logout().Wait() })
+	if err := c2.Login("alice@example.com", "secret123").Wait(); err != nil {
+		t.Fatalf("login2: %v", err)
+	}
+	if _, err := c2.Select("INBOX", nil).Wait(); err != nil {
+		t.Fatalf("select2: %v", err)
+	}
+	seqs, err := c2.Expunge().Collect()
+	if err != nil {
+		t.Fatalf("expunge: %v", err)
+	}
+	if len(seqs) != 1 {
+		t.Fatalf("expunge seqs = %v, want 1 条", seqs)
+	}
+	if _, err := stores.Mails.GetByID(ids[1]); err == nil {
+		t.Fatal("标记 \\Deleted 的邮件在重连后未被 EXPUNGE 删除")
+	}
+}
+
+// TestUidMoveFlow 验证 UID MOVE：目标文件夹出现该邮件且源文件夹删除。
+func TestUidMoveFlow(t *testing.T) {
+	stores, addr := startIntegrationServer(t)
+	ids := seedMailbox(t, stores, 1, 2)
+	uid := imap.UID(ids[1])
+
+	c := loginAndSelect(t, addr)
+	if _, err := c.Move(imap.UIDSetNum(uid), "Trash").Wait(); err != nil {
+		t.Fatalf("uid move: %v", err)
+	}
+
+	if _, err := stores.Mails.GetByID(ids[1]); err != nil {
+		t.Fatalf("moved message missing: %v", err)
+	}
+	msg, err := stores.Mails.GetByID(ids[1])
+	if err != nil {
+		t.Fatalf("get moved msg: %v", err)
+	}
+	if msg.Folder != "Trash" {
+		t.Fatalf("moved msg folder = %q, want Trash", msg.Folder)
 	}
 }

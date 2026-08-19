@@ -403,8 +403,8 @@ mailgo/
 │   │   ├── manager.go              # 外发队列、重试、限速、退信
 │   │   └── sign.go                 # DKIM 签名
 │   ├── imap_server/
-│   │   ├── server.go                # IMAP 服务
-│   │   └── backend.go               # IMAP 后端
+│   │   ├── server.go                # IMAP 服务（监听器/能力/跨会话推送）
+│   │   └── session.go               # IMAP Session 实现（SELECT/FETCH/STORE/EXPUNGE）
 │   ├── pop3_server/server.go         # POP3 服务
 │   ├── connhub/hub.go                # 协议连接注册中心（当前连接监控）
 │   ├── storage/attachment.go         # 附件文件存储
@@ -521,7 +521,7 @@ sudo journalctl -u mailgo -f
 | 数据库 | SQLite（默认）/ MySQL |
 | 配置格式 | TOML |
 | SMTP | github.com/emersion/go-smtp |
-| IMAP | github.com/emersion/go-imap v1 |
+| IMAP | github.com/emersion/go-imap/v2 |
 | POP3 | 手工实现 TCP 协议 |
 | 密码哈希 | golang.org/x/crypto/bcrypt |
 | 富文本 | Quill.js (CDN) |

@@ -33,6 +33,13 @@ type MailStore interface {
 	// SetFlaggedStates 批量设置多封邮件的星标状态（单条 UPDATE ... IN）。
 	SetFlaggedStates(ids []uint, flagged bool) error
 	MoveToFolder(id uint, folder string) error
+	// SetDeletedStates 批量设置多封邮件的 \Deleted 标记（单条 UPDATE ... IN）。
+	SetDeletedStates(ids []uint, deleted bool) error
+	// ListDeletedByUserAndFolder 列出某文件夹中所有已标记 \Deleted 的邮件
+	// （按 date DESC, id DESC 排序，与全量列表一致，序号映射全链路相同）。
+	ListDeletedByUserAndFolder(userID uint, folder string) ([]db.Message, error)
+	// DeleteMany 批量硬删除多封邮件（单条 DELETE ... IN）。
+	DeleteMany(ids []uint) error
 	Delete(id uint) error
 	CountUnread(userID uint, folder string) (int64, error)
 	CountByFolder(folder string) (int64, error)
@@ -128,6 +135,32 @@ func (s *mailStoreGorm) SetFlaggedStates(ids []uint, flagged bool) error {
 // MoveToFolder changes the folder of a message.
 func (s *mailStoreGorm) MoveToFolder(id uint, folder string) error {
 	return s.db.Model(&db.Message{}).Where("id = ?", id).Update("folder", folder).Error
+}
+
+// SetDeletedStates 批量设置多封邮件的 \Deleted 标记。
+func (s *mailStoreGorm) SetDeletedStates(ids []uint, deleted bool) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.db.Model(&db.Message{}).Where("id IN ?", ids).Update("is_deleted", deleted).Error
+}
+
+// ListDeletedByUserAndFolder 列出某文件夹中所有已标记 \Deleted 的邮件。
+func (s *mailStoreGorm) ListDeletedByUserAndFolder(userID uint, folder string) ([]db.Message, error) {
+	var messages []db.Message
+	if err := s.db.Where("user_id = ? AND folder = ? AND is_deleted = ?", userID, folder, true).
+		Order("date DESC, id DESC").Find(&messages).Error; err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
+// DeleteMany 批量硬删除多封邮件。
+func (s *mailStoreGorm) DeleteMany(ids []uint) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.db.Where("id IN ?", ids).Delete(&db.Message{}).Error
 }
 
 // Delete removes a message by ID.

@@ -83,8 +83,8 @@ mail_go/
 │   ├── smtp_server/
 │   │   └── server.go                 # SMTP 服务端（go-smtp Backend 实现）
 │   ├── imap_server/
-│   │   ├── server.go                 # IMAP 服务端启动
-│   │   └── backend.go               # go-imap Backend/User/Mailbox/Message 实现
+│   │   ├── server.go                 # IMAP 服务端启动（监听器/能力/跨会话推送）
+│   │   └── session.go                # go-imap/v2 imapserver.Session 实现
 │   ├── pop3_server/
 │   │   └── server.go                 # POP3 服务端（TCP 监听 + 文本协议）
 │   ├── web/
@@ -373,11 +373,11 @@ func (s *smtpSession) Logout() error
 #### IMAP Backend 接口（go-imap/v2 要求）
 
 ```go
-// internal/imap_server/backend.go
+// internal/imap_server/session.go
 
-// 实现 go-imap/v2 的 backend.Backend 接口
-type imapBackend struct {
-    userStore  store.UserStore
+// 实现 go-imap/v2 的 imapserver.Session 接口
+type imapSession struct {
+    stores  *store.Stores
     mailStore  store.MailStore
     domainStore store.DomainStore
     attStore   store.AttachmentStore
@@ -557,7 +557,7 @@ sequenceDiagram
 | Task ID | 任务名称 | 依赖 | 涉及文件 | 优先级 |
 |---------|---------|------|---------|--------|
 | T01 | 项目基础设施：go.mod + 入口 + 配置系统 + 数据库层 | — | go.mod, main.go, config/config.go, config/defaults.go, internal/db/db.go, internal/db/models.go, internal/store/*.go | P0 |
-| T02 | 邮件协议服务端（SMTP + IMAP + POP3） | T01 | internal/smtp_server/server.go, internal/imap_server/server.go, internal/imap_server/backend.go, internal/pop3_server/server.go | P0 |
+| T02 | 邮件协议服务端（SMTP + IMAP + POP3） | T01 | internal/smtp_server/server.go, internal/imap_server/server.go, internal/imap_server/session.go, internal/pop3_server/server.go | P0 |
 | T03 | Web 服务核心：路由 + 中间件 + 认证 + 邮件页面 | T01 | internal/web/server.go, internal/web/middleware/auth.go, internal/web/middleware/admin.go, internal/web/handlers/auth.go, internal/web/handlers/mail.go | P0 |
 | T04 | 管理后台 + 附件存储 + 模板 | T01, T03 | internal/web/handlers/admin.go, internal/storage/attachment.go, internal/web/templates/*.html | P0 |
 | T05 | 集成调试 + 安装脚本 | T02, T03, T04 | main.go（更新）, scripts/install.sh | P1 |
@@ -614,7 +614,7 @@ go 1.22
 
 require (
     github.com/emersion/go-smtp v0.21.0
-    github.com/emersion/go-imap/v2 v2.0.0-beta.5
+    github.com/emersion/go-imap/v2 v2.0.0-beta.8
     github.com/emersion/go-message v0.18.0
     github.com/gin-gonic/gin v1.10.0
     github.com/gin-contrib/sessions v0.0.5

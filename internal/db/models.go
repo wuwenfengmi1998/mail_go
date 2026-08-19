@@ -65,6 +65,11 @@ type Message struct {
 	RawData   string    `gorm:"type:mediumtext" json:"raw_data"`
 	IsRead    bool      `gorm:"default:false" json:"is_read"`
 	IsFlagged bool      `gorm:"default:false" json:"is_flagged"`
+	// IsDeleted 持久化 IMAP \Deleted 标记（STORE +FLAGS \Deleted 写入，
+	// EXPUNGE/UID EXPUNGE 时按此删除）。此前该标记只存于内存会话
+	// （imapMailbox.deleted map），重选文件夹/重连即丢失，导致客户端
+	// COPY→Trash 后 EXPUNGE 删不掉原邮件（垃圾桶只有副本）。
+	IsDeleted bool      `gorm:"default:false;index" json:"is_deleted"`
 	Date      time.Time `json:"date"`
 	CreatedAt time.Time `json:"created_at"`
 }
