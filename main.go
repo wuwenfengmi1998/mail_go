@@ -291,7 +291,10 @@ func main() {
 	}
 
 	// 10. Start Web server
-	webServer := web.NewWebServer(cfg.Web, stores, attStorage, cfg.Storage, cfg.Auth, cfg.Ban, cfg.Caddy, outboundMgr)
+	webServer, err := web.NewWebServer(cfg.Web, stores, attStorage, cfg.Storage, cfg.Auth, cfg.Ban, cfg.Caddy, outboundMgr)
+	if err != nil {
+		log.Fatalf("Web 服务初始化失败: %v", err)
+	}
 	fmt.Printf("Web 服务启动在 %s\n", cfg.Web.Addr)
 	go func() {
 		if err := webServer.Start(); err != nil {

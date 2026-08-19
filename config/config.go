@@ -1,7 +1,10 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -25,7 +28,24 @@ type StorageConfig struct {
 // WebConfig holds web server settings.
 type WebConfig struct {
 	Addr string `toml:"addr"`
+	// SecretKey 是 Web 会话 cookie 的签名密钥。留空时首次启动自动生成
+	// 随机密钥并持久化到配置文件；也可通过环境变量 MAILGO_SECRET_KEY
+	// 覆盖（覆盖值不落盘，适合容器部署）。
+	SecretKey string `toml:"secret_key"`
 }
+
+// SecretKeyEnvVar 是覆盖会话签名密钥的环境变量名。
+const SecretKeyEnvVar = "MAILGO_SECRET_KEY"
+
+// InsecureLegacySecretKey 是旧版本硬编码在源码中的会话签名密钥。
+// 源码公开意味着该密钥完全不可信，任何出现都必须替换。
+const InsecureLegacySecretKey = "mail-go-secret-key-change-in-production"
+
+// MinSecretKeyLen 是允许的最短会话密钥长度（字节）。
+const MinSecretKeyLen = 16
+
+// secretKeyRandomBytes 是自动生成密钥的随机字节数（hex 编码后 64 字符）。
+const secretKeyRandomBytes = 32
 
 // SMTPConfig holds SMTP server settings.
 type SMTPConfig struct {
@@ -298,6 +318,63 @@ func mergeDefaults(cfg *Config, defaults *Config) *Config {
 	return cfg
 }
 
+// generateSecretKey generates a cryptographically random session key,
+// hex-encoded (64 characters for 32 random bytes).
+func generateSecretKey() (string, error) {
+	buf := make([]byte, secretKeyRandomBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("生成随机会话密钥失败: %w", err)
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+// ensureSecretKey guarantees that cfg holds a trustworthy session key:
+// an empty value or the known insecure legacy default is replaced with a
+// freshly generated random key. The caller is responsible for persisting
+// the updated config.
+func ensureSecretKey(cfg *Config) error {
+	if cfg.Web.SecretKey != "" && cfg.Web.SecretKey != InsecureLegacySecretKey {
+		return nil
+	}
+	key, err := generateSecretKey()
+	if err != nil {
+		return err
+	}
+	if cfg.Web.SecretKey == InsecureLegacySecretKey {
+		log.Printf("检测到不安全的旧默认会话密钥，已自动更换为随机密钥（所有已登录会话将失效）")
+	} else {
+		log.Printf("已生成随机会话密钥并写入配置文件（Web 会话签名密钥，请妥善备份）")
+	}
+	cfg.Web.SecretKey = key
+	return nil
+}
+
+// applySecretKeyEnv lets the MAILGO_SECRET_KEY environment variable
+// override the key loaded from the config file. The override value is
+// never persisted to disk.
+func applySecretKeyEnv(cfg *Config) *Config {
+	if env := os.Getenv(SecretKeyEnvVar); env != "" {
+		cfg.Web.SecretKey = env
+	}
+	return cfg
+}
+
+// ValidateSecretKey rejects session signing keys that are missing, too
+// short, or the known insecure legacy default hardcoded in old versions.
+func ValidateSecretKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("Web 会话密钥为空，拒绝启动：请检查配置文件 [web].secret_key 或环境变量 %s", SecretKeyEnvVar)
+	}
+	if key == InsecureLegacySecretKey {
+		return fmt.Errorf("Web 会话密钥为已知不安全的旧默认值，拒绝启动：请删除配置文件 [web].secret_key 后重启以自动生成随机密钥")
+	}
+	if len(key) < MinSecretKeyLen {
+		return fmt.Errorf("Web 会话密钥过短（%d 字节，最少 %d）：请检查 %s 或 [web].secret_key",
+			len(key), MinSecretKeyLen, SecretKeyEnvVar)
+	}
+	return nil
+}
+
 // writeConfig writes the configuration to the given file path.
 // It creates the parent directories if they don't exist.
 func writeConfig(path string, cfg *Config) error {
@@ -316,6 +393,11 @@ func writeConfig(path string, cfg *Config) error {
 	if err := enc.Encode(cfg); err != nil {
 		return fmt.Errorf("写入配置文件失败: %w", err)
 	}
+
+	// 配置文件包含会话密钥、中继密码等敏感信息，收紧为仅属主可读写
+	if err := os.Chmod(path, 0600); err != nil {
+		return fmt.Errorf("设置配置文件权限失败 %s: %w", path, err)
+	}
 	return nil
 }
 
@@ -323,15 +405,23 @@ func writeConfig(path string, cfg *Config) error {
 // If the configuration file does not exist, it creates one with default values.
 // If the file exists but has missing fields, they are filled with defaults and the file is updated.
 func LoadConfig() (*Config, error) {
-	path := configFilePath()
+	return loadConfigFrom(configFilePath())
+}
+
+// loadConfigFrom implements LoadConfig against an explicit file path so it
+// can be unit-tested with temporary directories.
+func loadConfigFrom(path string) (*Config, error) {
 	defaults := defaultConfig()
 
 	// If config file doesn't exist, create it with defaults
 	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if err := ensureSecretKey(defaults); err != nil {
+			return nil, err
+		}
 		if mkErr := writeConfig(path, defaults); mkErr != nil {
 			return nil, mkErr
 		}
-		return defaults, nil
+		return applySecretKeyEnv(defaults), nil
 	}
 
 	// Read existing config file
@@ -351,6 +441,11 @@ func LoadConfig() (*Config, error) {
 		cfg.Outbound.RelayStartTLS = defaults.Outbound.RelayStartTLS
 	}
 
+	// 会话密钥缺失或不安全时补发随机密钥（随下面的写回一并落盘）
+	if err := ensureSecretKey(cfg); err != nil {
+		return nil, err
+	}
+
 	// Merge defaults for any missing fields
 	merged := mergeDefaults(cfg, defaults)
 
@@ -360,5 +455,5 @@ func LoadConfig() (*Config, error) {
 		return nil, writeErr
 	}
 
-	return merged, nil
+	return applySecretKeyEnv(merged), nil
 }

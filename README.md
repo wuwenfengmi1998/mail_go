@@ -82,6 +82,9 @@ attach_dir = "/srv/mail_go/attachments"     # 附件存储目录
 
 [web]
 addr = ":8080"                             # 监听地址，支持 TCP 端口或 Unix socket
+secret_key = ""                             # Web 会话签名密钥；留空时首次启动自动生成
+                                           # 随机密钥并写入本文件（请妥善备份，泄露/丢失
+                                           # 分别意味着会话可被伪造/所有登录态失效）
 
 [smtp]
 addr = ":25"                               # SMTP 明文端口
@@ -174,6 +177,16 @@ addr = "/run/mail_go/web.sock"
 ```
 
 当 `addr` 以 `/` 开头时，Gin 自动以 Unix socket 方式监听。
+
+### 3. 指定会话密钥（容器/多实例部署）
+
+会话签名密钥可通过环境变量 `MAILGO_SECRET_KEY` 覆盖（优先于配置文件，且不会写入磁盘）：
+
+```bash
+MAILGO_SECRET_KEY="$(openssl rand -hex 32)" mail_go
+```
+
+要求：长度至少 16 字节；留空时由配置文件提供（首次启动自动生成）。更换密钥后所有已登录会话立即失效，用户需重新登录。
 
 Nginx 反向代理配置：
 

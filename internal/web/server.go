@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"math"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -166,17 +167,22 @@ func avatarStyle(s string) string {
 
 // NewWebServer creates a new WebServer, initializes the Gin engine,
 // configures sessions, middleware, and registers all routes.
-func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, storageCfg config.StorageConfig, authCfg config.AuthConfig, banCfg config.BanConfig, caddyCfg config.CaddyConfig, ob *outbound.Manager) *WebServer {
+func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storage.AttachmentStorage, storageCfg config.StorageConfig, authCfg config.AuthConfig, banCfg config.BanConfig, caddyCfg config.CaddyConfig, ob *outbound.Manager) (*WebServer, error) {
+	if err := config.ValidateSecretKey(cfg.SecretKey); err != nil {
+		return nil, err
+	}
+
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	engine.Use(gin.Logger())
 	engine.Use(gin.Recovery())
 
-	// Session store (cookie-based)
-	cookieStore := cookie.NewStore([]byte("mail-go-secret-key-change-in-production"))
+	// Session store (cookie-based). The signing key comes from the config
+	// file (auto-generated random key) or the MAILGO_SECRET_KEY env var.
+	cookieStore := cookie.NewStore([]byte(cfg.SecretKey))
 	cookieStore.Options(sessions.Options{
 		HttpOnly: true,
-		SameSite: 3, // SameSiteLaxMode
+		SameSite: 3, // SameSiteStrictMode（比 Lax 更严格）
 		MaxAge:   86400,
 		Path:     "/",
 	})
@@ -201,7 +207,7 @@ func NewWebServer(cfg config.WebConfig, stores *store.Stores, attStorage *storag
 	}
 
 	ws.registerRoutes()
-	return ws
+	return ws, nil
 }
 
 // registerRoutes sets up all HTTP routes with their handlers and middleware.
@@ -276,6 +282,12 @@ func (ws *WebServer) registerRoutes() {
 		admin.POST("/bans/:id/unban", adminHandler.UnbanIP)
 		admin.POST("/bans/cleanup", adminHandler.CleanupBans)
 	}
+}
+
+// Handler returns the underlying Gin engine as an http.Handler, useful for
+// integration tests and for embedding behind a reverse proxy.
+func (ws *WebServer) Handler() http.Handler {
+	return ws.engine
 }
 
 // Start launches the HTTP server on the configured address.
