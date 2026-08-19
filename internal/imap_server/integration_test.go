@@ -188,3 +188,95 @@ func TestSeqStoreClientSelfNumbered(t *testing.T) {
 	// 客户端意图是标记最新一封（ids[2]）为已读
 	assertReadState(t, stores, ids[2], true)
 }
+
+// TestFetchBodyMalformedMIME 回归：消息包含无法解析的 MIME（base64 编码的
+// message/rfc822 附件 / 截断的 multipart）时，FETCH BODY/BODYSTRUCTURE
+// 不得因 nil BodyStructure 触发服务器 panic（否则连接中断，客户端只收到
+// 部分邮件或一直卡在同步）。修复前 go-imap send() 协程会 nil 指针崩溃。
+func TestFetchBodyMalformedMIME(t *testing.T) {
+	stores, addr := startIntegrationServer(t)
+
+	// 1) base64 编码的 message/rfc822 附件（转发邮件场景）：
+	//    backendutil.FetchBodyStructure 不解码 base64，直接把编码文本
+	//    当嵌套消息头解析 → "malformed MIME header line" 错误。
+	rfc822Body := "UmVjZWl2ZWQ6IGZyb20gb3V0Ym91bmQuY2kuaWNsb3VkLmNvbSAodW5rbm93biBbMTI3LjAuMC4yKVxuXHQgYnkgcDAwLWljbG91ZG10YS1hc210cC11cy1jZW50cmFsLTFrLTEwMC1wZXJjZW50LTggKFBvc3RmaXgpIHdpdGggRVNNVFBTIGlkIDIxRTlBMThDQURDRjM4MlxuXHQgZm9yIDxkc2hAbG12ZS5uZXQ+OyBTdW4sIDE2IEF1ZyAyMDI2IDEzOjU4OjIxICswMDAwIChVVEMpXG5YLUlDTC1SZXBJZDogRURWY1BlQ3RlWG4tZ0Z1T0xxUWhfSjZvcE9fN1B2OEtsOW1mMDg2VUFxZ29zXG5EYXRlOiBTdW4sIDE2IEF1ZyAyMDI2IDEzOjU4OjIxICswMDAwXG5Gcm9tOiBkYXZpZEB5YW5kZXguY29tXG5UbzogZHNoQGxtdmUubmV0XG5NZXNzYWdlLUlEOiA8QTIxNzBEMTEtMkI1MC00MTQwLTlEQTMtMkI3M0U2RUIwQTc4QHlhbmRleC5jb20+XG5TdWJqZWN0OiB0ZXN0XG5cbmhlbGxvXG4="
+	msgWithRFC822 := &db.Message{
+		UserID:   1,
+		Folder:   "INBOX",
+		FromAddr: "alice@example.com",
+		ToAddr:   "alice@example.com",
+		Subject:  "fwd",
+		Date:     time.Now().Add(-2 * time.Hour),
+		RawData: "From: alice@example.com\r\n" +
+			"To: alice@example.com\r\n" +
+			"Subject: fwd\r\n" +
+			"MIME-Version: 1.0\r\n" +
+			"Content-Type: multipart/mixed; boundary=\"==fwd==\"\r\n\r\n" +
+			"--==fwd==\r\n" +
+			"Content-Type: text/plain; charset=\"utf-8\"\r\n" +
+			"Content-Transfer-Encoding: 8bit\r\n\r\n" +
+			"正文\r\n\r\n" +
+			"--==fwd==\r\n" +
+			"Content-Type: message/rfc822\r\n" +
+			"Content-Transfer-Encoding: base64\r\n" +
+			"Content-Disposition: attachment; filename=\"original.eml\"\r\n" +
+			"MIME-Version: 1.0\r\n\r\n" +
+			rfc822Body + "\r\n" +
+			"--==fwd==--\r\n",
+	}
+	// 2) 截断的 multipart（缺少结束边界）：BODYSTRUCTURE(extended) 解析报错
+	msgTruncated := &db.Message{
+		UserID:   1,
+		Folder:   "INBOX",
+		FromAddr: "alice@example.com",
+		ToAddr:   "alice@example.com",
+		Subject:  "truncated",
+		Date:     time.Now().Add(-1 * time.Hour),
+		RawData: "From: alice@example.com\r\n" +
+			"To: alice@example.com\r\n" +
+			"Subject: truncated\r\n" +
+			"MIME-Version: 1.0\r\n" +
+			"Content-Type: multipart/alternative; boundary=\"==trunc==\"\r\n\r\n" +
+			"--==trunc==\r\n" +
+			"Content-Type: text/plain\r\n\r\n" +
+			"hello\r\n",
+		// 无结束边界
+	}
+	if err := stores.Mails.Create(msgWithRFC822); err != nil {
+		t.Fatalf("create msg: %v", err)
+	}
+	if err := stores.Mails.Create(msgTruncated); err != nil {
+		t.Fatalf("create msg: %v", err)
+	}
+
+	c := loginAndSelect(t, addr)
+
+	seqset := new(imap.SeqSet)
+	seqset.AddRange(1, 2)
+
+	// BODY：历史上 message/rfc822 消息解析失败 → nil BodyStructure → panic
+	msgs := make(chan *imap.Message, 10)
+	if err := c.Fetch(seqset, []imap.FetchItem{imap.FetchBody}, msgs); err != nil {
+		t.Fatalf("fetch body: %v", err)
+	}
+	got := 0
+	for range msgs {
+		got++
+	}
+	if got != 2 {
+		t.Fatalf("FETCH BODY 返回 %d/2 封", got)
+	}
+
+	// BODYSTRUCTURE：截断 multipart 在 extended 解析时报错 → nil → panic
+	msgs2 := make(chan *imap.Message, 10)
+	if err := c.Fetch(seqset, []imap.FetchItem{imap.FetchBodyStructure}, msgs2); err != nil {
+		t.Fatalf("fetch bodystructure: %v", err)
+	}
+	got2 := 0
+	for range msgs2 {
+		got2++
+	}
+	if got2 != 2 {
+		t.Fatalf("FETCH BODYSTRUCTURE 返回 %d/2 封", got2)
+	}
+}
