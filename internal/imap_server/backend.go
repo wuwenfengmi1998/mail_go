@@ -83,10 +83,20 @@ func buildFlagsUpdate(stores *store.Stores, userEmail, mailbox string, msg *db.M
 	if stores == nil || msg == nil || userEmail == "" || mailbox == "" {
 		return nil
 	}
-	imapMsg := imap.NewMessage(seqOf(stores, msg.UserID, mailbox, msg.ID),
+	return buildFlagsUpdateAt(seqOf(stores, msg.UserID, mailbox, msg.ID), userEmail, mailbox, msg, msg.IsRead, msg.IsFlagged, deleted)
+}
+
+// buildFlagsUpdateAt 与 buildFlagsUpdate 相同，但序号与已读/星标状态由
+// 调用方直接提供（批量 STORE 路径已加载全量列表，避免逐条 GetByID +
+// seqOf 全量扫描）。
+func buildFlagsUpdateAt(seq uint32, userEmail, mailbox string, msg *db.Message, read, flagged, deleted bool) *backend.MessageUpdate {
+	if msg == nil || userEmail == "" || mailbox == "" {
+		return nil
+	}
+	imapMsg := imap.NewMessage(seq,
 		[]imap.FetchItem{imap.FetchUid, imap.FetchFlags})
 	imapMsg.Uid = uint32(msg.ID)
-	imapMsg.Flags = flagsOf(msg.IsRead, msg.IsFlagged, deleted)
+	imapMsg.Flags = flagsOf(read, flagged, deleted)
 	return &backend.MessageUpdate{
 		Update:  backend.NewUpdate(userEmail, mailbox),
 		Message: imapMsg,
@@ -790,12 +800,30 @@ func (m *imapMailbox) UpdateMessagesFlags(uid bool, seqset *imap.SeqSet, op imap
 	if err != nil {
 		return err
 	}
+	// 批量模式：先收集每封匹配消息的目标标志状态，再合并成少量 SQL
+	// 写入。此前逐条 UPDATE + 逐条 GetByID + 逐条 seqOf 全量扫描，
+	// 手机整批标记已读（60+ 封）时会产生 60 次写 + 180 次全量读
+	// （含大附件 raw_data），该连接命令循环被长时间占住，其他连接
+	// 的响应通道也被推送洪泛阻塞——表现为"卡在接收邮件"。
+	flagSet := make(map[string]bool, len(flags))
+	for _, flag := range flags {
+		flagSet[flag] = true
+	}
 
-	// 记录首个持久化错误：SQLite 忙/锁等瞬时失败必须让客户端感知
-	// （返回 NO 触发重试），否则已读/星标会静默丢失。
-	var firstErr error
+	type change struct {
+		msg        *db.Message
+		seq        uint32
+		newRead    bool
+		readSet    bool
+		newFlagged bool
+		flaggedSet bool
+		newDeleted bool
+		deletedSet bool
+	}
+	var changes []change
 
-	for i, dbMsg := range dbMessages {
+	for i := range dbMessages {
+		dbMsg := &dbMessages[i]
 		var match bool
 		if uid {
 			match = seqset.Contains(uint32(dbMsg.ID))
@@ -806,55 +834,93 @@ func (m *imapMailbox) UpdateMessagesFlags(uid bool, seqset *imap.SeqSet, op imap
 			continue
 		}
 
-		flagSet := make(map[string]bool, len(flags))
-		for _, flag := range flags {
-			flagSet[flag] = true
-		}
-
-		applyFlag := func(flag string, enabled bool) {
+		c := change{msg: dbMsg, seq: uint32(i + 1)}
+		apply := func(flag string, enabled bool) {
 			switch flag {
 			case "\\Seen":
-				if err := m.stores.Mails.MarkReadState(dbMsg.ID, enabled); err != nil && firstErr == nil {
-					log.Printf("IMAP: mark read state for msg %d failed: %v", dbMsg.ID, err)
-					firstErr = err
-				}
+				c.newRead, c.readSet = enabled, true
 			case "\\Flagged":
-				if err := m.stores.Mails.MarkFlagged(dbMsg.ID, enabled); err != nil && firstErr == nil {
-					log.Printf("IMAP: mark flagged for msg %d failed: %v", dbMsg.ID, err)
-					firstErr = err
-				}
+				c.newFlagged, c.flaggedSet = enabled, true
 			case "\\Deleted":
-				if enabled {
-					m.deleted[dbMsg.ID] = true
-				} else {
-					delete(m.deleted, dbMsg.ID)
-				}
+				c.newDeleted, c.deletedSet = enabled, true
 			}
 		}
-
 		switch op {
 		case imap.SetFlags:
-			applyFlag("\\Seen", flagSet["\\Seen"])
-			applyFlag("\\Flagged", flagSet["\\Flagged"])
-			applyFlag("\\Deleted", flagSet["\\Deleted"])
+			apply("\\Seen", flagSet["\\Seen"])
+			apply("\\Flagged", flagSet["\\Flagged"])
+			apply("\\Deleted", flagSet["\\Deleted"])
 		case imap.AddFlags:
 			for flag := range flagSet {
-				applyFlag(flag, true)
+				apply(flag, true)
 			}
 		case imap.RemoveFlags:
 			for flag := range flagSet {
-				applyFlag(flag, false)
+				apply(flag, false)
 			}
 		}
+		changes = append(changes, c)
+	}
 
-		// 标志变化（已读/星标/删除）→ 推送给同用户其他客户端
-		// （重新读库取最新状态，\Deleted 取会话内状态）
-		fresh, err := m.stores.Mails.GetByID(dbMsg.ID)
-		if err != nil {
-			continue
+	// 批量持久化（已读/星标合并为单条 UPDATE ... IN）
+	var readTrue, readFalse, flagTrue, flagFalse []uint
+	for _, c := range changes {
+		if c.readSet && c.newRead != c.msg.IsRead {
+			if c.newRead {
+				readTrue = append(readTrue, c.msg.ID)
+			} else {
+				readFalse = append(readFalse, c.msg.ID)
+			}
 		}
-		deleted := m.deleted != nil && m.deleted[dbMsg.ID]
-		pushUpdate(m.user.updates, buildFlagsUpdate(m.stores, m.user.email, m.name, fresh, deleted))
+		if c.flaggedSet && c.newFlagged != c.msg.IsFlagged {
+			if c.newFlagged {
+				flagTrue = append(flagTrue, c.msg.ID)
+			} else {
+				flagFalse = append(flagFalse, c.msg.ID)
+			}
+		}
+	}
+	// 记录首个持久化错误：SQLite 忙/锁等瞬时失败必须让客户端感知
+	// （返回 NO 触发重试），否则已读/星标会静默丢失。
+	var firstErr error
+	mark := func(err error) {
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if len(readTrue) > 0 {
+		mark(m.stores.Mails.SetReadStates(readTrue, true))
+	}
+	if len(readFalse) > 0 {
+		mark(m.stores.Mails.SetReadStates(readFalse, false))
+	}
+	if len(flagTrue) > 0 {
+		mark(m.stores.Mails.SetFlaggedStates(flagTrue, true))
+	}
+	if len(flagFalse) > 0 {
+		mark(m.stores.Mails.SetFlaggedStates(flagFalse, false))
+	}
+
+	// 标志变化 → 推送给同用户其他客户端（状态取目标值，序号用已加载
+	// 列表的下标——与 ListMessages/Status 全链路一致，不再重复全量扫描）
+	for _, c := range changes {
+		if c.deletedSet {
+			if c.newDeleted {
+				m.deleted[c.msg.ID] = true
+			} else {
+				delete(m.deleted, c.msg.ID)
+			}
+		}
+		read := c.msg.IsRead
+		if c.readSet {
+			read = c.newRead
+		}
+		flagged := c.msg.IsFlagged
+		if c.flaggedSet {
+			flagged = c.newFlagged
+		}
+		deleted := m.deleted != nil && m.deleted[c.msg.ID]
+		pushUpdate(m.user.updates, buildFlagsUpdateAt(c.seq, m.user.email, m.name, c.msg, read, flagged, deleted))
 	}
 
 	return firstErr
