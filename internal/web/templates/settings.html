@@ -1,10 +1,10 @@
 {{define "settings"}}
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{htmlLang .Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>设置 - MailGo</title>
+    <title>{{t .Lang "设置"}} - MailGo</title>
     {{template "styles" .}}
 </head>
 <body class="page-settings">
@@ -15,21 +15,21 @@
             {{if .error}}<div class="alert alert-error">{{.error}}</div>{{end}}
             {{if .success}}<div class="alert alert-success">{{.success}}</div>{{end}}
             {{if .mustChange}}<div class="alert" style="border:1px solid #ffa940;background:#fff7e6;color:#d46b08;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13.5px;">
-                ⚠️ 首次登录/密码已被重置，请立即修改密码后再继续使用邮箱功能。
+                {{t .Lang "⚠️ 首次登录/密码已被重置，请立即修改密码后再继续使用邮箱功能。"}}
             </div>{{end}}
 
             <div class="card" style="max-width:720px;">
                 <h2 style="font-size:17px;margin-bottom:18px;display:flex;align-items:center;gap:10px;">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1677ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-                    账号信息
+                    {{t .Lang "账号信息"}}
                 </h2>
                 <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px;">
                     <span class="avatar" style="width:52px;height:52px;font-size:22px;{{avatarStyle .currentUser.Username}}">{{initial .currentUser.Username}}</span>
                     <div>
                         <div style="font-size:16px;font-weight:600;">{{.currentUser.Username}}@{{.currentUser.Domain.Name}}</div>
                         <div style="color:var(--text-3);font-size:12.5px;margin-top:3px;">
-                            已用 {{formatBytes .currentUser.UsedBytes}} / 配额 {{formatBytes .currentUser.QuotaBytes}}
-                            {{if .currentUser.IsAdmin}} · 管理员{{end}}
+                            {{tf .Lang "已用 %s / 配额 %s" (formatBytes .currentUser.UsedBytes) (formatBytes .currentUser.QuotaBytes)}}
+                            {{if .currentUser.IsAdmin}} · {{t .Lang "管理员"}}{{end}}
                         </div>
                     </div>
                 </div>
@@ -37,30 +37,46 @@
             </div>
 
             <div class="card" style="max-width:720px;">
-                <h2 style="font-size:17px;margin-bottom:18px;">修改密码</h2>
+                <h2 style="font-size:17px;margin-bottom:18px;">{{t .Lang "界面语言"}}</h2>
                 <form method="POST" action="/settings" style="max-width:420px;">
                     <div class="form-group">
-                        <label>当前密码</label>
-                        <input type="password" name="old_password" required placeholder="请输入当前密码" autocomplete="current-password">
+                        <label>{{t .Lang "界面语言"}}</label>
+                        <select name="language">
+                            <option value="auto" {{if eq .currentUser.Language "auto"}}selected{{end}}>{{t .Lang "自动（跟随浏览器）"}}</option>
+                            <option value="en" {{if eq .currentUser.Language "en"}}selected{{end}}>English</option>
+                            <option value="zh" {{if eq .currentUser.Language "zh"}}selected{{end}}>中文</option>
+                            <option value="ja" {{if eq .currentUser.Language "ja"}}selected{{end}}>日本語</option>
+                        </select>
                     </div>
-                    <div class="form-group">
-                        <label>新密码</label>
-                        <input type="password" name="new_password" required placeholder="请输入新密码" autocomplete="new-password">
-                    </div>
-                    <div class="form-group">
-                        <label>确认新密码</label>
-                        <input type="password" name="confirm_password" required placeholder="请再次输入新密码" autocomplete="new-password">
-                    </div>
-                    <button type="submit" class="btn btn-primary">修改密码</button>
+                    <button type="submit" class="btn btn-primary">{{t .Lang "保存"}}</button>
                 </form>
             </div>
 
             <div class="card" style="max-width:720px;">
-                <h2 style="font-size:17px;margin-bottom:10px;">帮助</h2>
+                <h2 style="font-size:17px;margin-bottom:18px;">{{t .Lang "修改密码"}}</h2>
+                <form method="POST" action="/settings" style="max-width:420px;">
+                    <div class="form-group">
+                        <label>{{t .Lang "当前密码"}}</label>
+                        <input type="password" name="old_password" required placeholder="{{t .Lang "请输入当前密码"}}" autocomplete="current-password">
+                    </div>
+                    <div class="form-group">
+                        <label>{{t .Lang "新密码"}}</label>
+                        <input type="password" name="new_password" required placeholder="{{t .Lang "请输入新密码"}}" autocomplete="new-password">
+                    </div>
+                    <div class="form-group">
+                        <label>{{t .Lang "确认新密码"}}</label>
+                        <input type="password" name="confirm_password" required placeholder="{{t .Lang "请再次输入新密码"}}" autocomplete="new-password">
+                    </div>
+                    <button type="submit" class="btn btn-primary">{{t .Lang "修改密码"}}</button>
+                </form>
+            </div>
+
+            <div class="card" style="max-width:720px;">
+                <h2 style="font-size:17px;margin-bottom:10px;">{{t .Lang "帮助"}}</h2>
                 <p style="color:var(--text-2);font-size:13.5px;line-height:1.9;">
-                    客户端收发信（IMAP / SMTP）配置：<br>
-                    IMAP 服务器：{{.currentUser.Domain.Name}} 端口 143 / SSL 993<br>
-                    SMTP 服务器：{{.currentUser.Domain.Name}} 端口 587（提交）/ SSL 465
+                    {{t .Lang "客户端收发信（IMAP / SMTP）配置："}}<br>
+                    {{tf .Lang "IMAP 服务器：%s 端口 %d / SSL %d" .currentUser.Domain.Name 143 993}}<br>
+                    {{tf .Lang "SMTP 服务器：%s 端口 %d（提交）/ SSL %d" .currentUser.Domain.Name 587 465}}
                 </p>
             </div>
         </main>

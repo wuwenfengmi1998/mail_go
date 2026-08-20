@@ -18,6 +18,7 @@ import (
 
 	"mail_go/config"
 	"mail_go/internal/connhub"
+	"mail_go/internal/i18n"
 	"mail_go/internal/imap_server"
 	"mail_go/internal/mailutil"
 	"mail_go/internal/outbound"
@@ -84,6 +85,21 @@ func templateFuncs() template.FuncMap {
 		"domainName": func(domainID uint, domains []interface{}) string {
 			return fmt.Sprintf("Domain #%d", domainID)
 		},
+		// t / tf 多语言翻译（见 internal/i18n）：t 返回译文，
+		// tf 对译文做 fmt.Sprintf（带占位符的消息）。
+		"t":  i18n.T,
+		"tf": i18n.TF,
+		// htmlLang 返回 <html lang="..."> 属性值（zh → zh-CN）。
+		"htmlLang": func(lang string) string {
+			switch i18n.Normalize(lang) {
+			case i18n.LangZh:
+				return "zh-CN"
+			case i18n.LangJa:
+				return "ja"
+			default:
+				return "en"
+			}
+		},
 		// jsonify 把任意值序列化为安全的 JS 字面量（JSON 字符串），
 		// 用于在 <script> 上下文中注入数据。encoding/json 默认转义
 		// < > &（\u003c 等），无法逃出 </script>，杜绝 script 注入。
@@ -108,12 +124,11 @@ func templateFuncs() template.FuncMap {
 		"initial": initial,
 		// truncate 折叠空白并截断到 n 个字符（用于列表摘要）。
 		"truncate": truncate,
-		// shortDate 邮件列表时间：统一 12 小时制（上午/下午）。
+		// shortDate 邮件列表时间：按界面语言输出 12 小时制。
 		// 今天显示「下午 2:35」，今年显示「08-20 下午 2:35」，
 		// 更早显示「2026-08-20 下午 2:35」。
 		"shortDate": shortDate,
-		// time12 完整时间（含秒），先转换为 Web 时区：
-		// 「2026-08-20 下午 2:35:05」。
+		// time12 完整时间（含秒），先转换为 Web 时区。
 		"time12": time12,
 		// time12m 同上但不含秒。
 		"time12m": time12m,
@@ -123,21 +138,27 @@ func templateFuncs() template.FuncMap {
 		"avatarStyle": avatarStyle,
 		// urlPath 转义文件夹名用于 URL 路径（自定义文件夹可能含中文/空格）。
 		"urlPath": url.PathEscape,
-		// folderLabel 返回文件夹的界面显示名（系统文件夹中文名，自定义原名）。
-		"folderLabel": func(name string) string {
-			switch name {
-			case "INBOX":
-				return "收件箱"
-			case "Sent":
-				return "已发送"
-			case "Drafts":
-				return "草稿箱"
-			case "Trash":
-				return "已删除"
-			default:
-				return name
-			}
+		// folderLabel 返回文件夹的界面显示名（系统文件夹按语言翻译，自定义原名）。
+		"folderLabel": func(lang, name string) string {
+			return folderLabel(lang, name)
 		},
+	}
+}
+
+// folderLabel 返回文件夹的界面显示名：系统文件夹按界面语言翻译，
+// 自定义文件夹原样返回。
+func folderLabel(lang, name string) string {
+	switch name {
+	case "INBOX":
+		return i18n.T(lang, "收件箱")
+	case "Sent":
+		return i18n.T(lang, "已发送")
+	case "Drafts":
+		return i18n.T(lang, "草稿箱")
+	case "Trash":
+		return i18n.T(lang, "已删除")
+	default:
+		return name
 	}
 }
 
@@ -186,11 +207,12 @@ func truncate(s string, n int) string {
 	return string(r[:n]) + "…"
 }
 
-// periodOf 返回 12 小时制的时间段与小时：上午/下午 + 1-12。
-func periodOf(t time.Time) (string, int) {
-	period := "上午"
+// periodOf 返回 12 小时制的时间段与小时：按界面语言输出
+// 上午/下午（zh）、AM/PM（en）、午前/午後（ja），小时 1-12。
+func periodOf(lang string, t time.Time) (string, int) {
+	period := i18n.T(lang, "上午")
 	if t.Hour() >= 12 {
-		period = "下午"
+		period = i18n.T(lang, "下午")
 	}
 	h := t.Hour() % 12
 	if h == 0 {
@@ -202,10 +224,10 @@ func periodOf(t time.Time) (string, int) {
 // shortDate 邮件列表时间（12 小时制，先按 Web 配置时区转换）：
 // 今天 → 「下午 2:35」；今年 → 「08-20 下午 2:35」；
 // 更早 → 「2026-08-20 下午 2:35」。
-func shortDate(t time.Time) string {
+func shortDate(lang string, t time.Time) string {
 	t = inWebTZ(t)
 	now := time.Now().In(t.Location())
-	period, h := periodOf(t)
+	period, h := periodOf(lang, t)
 	clock := fmt.Sprintf("%s %d:%02d", period, h, t.Minute())
 	if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
 		return clock
@@ -218,16 +240,16 @@ func shortDate(t time.Time) string {
 
 // time12 完整时间（12 小时制，先按 Web 配置时区转换）：
 // 「2026-08-20 下午 2:35:05」。
-func time12(t time.Time) string {
+func time12(lang string, t time.Time) string {
 	t = inWebTZ(t)
-	period, h := periodOf(t)
+	period, h := periodOf(lang, t)
 	return fmt.Sprintf("%s %s %d:%02d:%02d", t.Format("2006-01-02"), period, h, t.Minute(), t.Second())
 }
 
 // time12m 完整时间（12 小时制，不含秒）。
-func time12m(t time.Time) string {
+func time12m(lang string, t time.Time) string {
 	t = inWebTZ(t)
-	period, h := periodOf(t)
+	period, h := periodOf(lang, t)
 	return fmt.Sprintf("%s %s %d:%02d", t.Format("2006-01-02"), period, h, t.Minute())
 }
 

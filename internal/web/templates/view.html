@@ -1,10 +1,10 @@
 {{define "view"}}
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{htmlLang .Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>查看邮件 - MailGo</title>
+    <title>{{t .Lang "查看邮件"}} - MailGo</title>
     {{template "styles" .}}
 </head>
 <body class="page-view">
@@ -15,50 +15,50 @@
             <div class="view-toolbar">
                 <a href="javascript:history.back()" class="tb-btn">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
-                    返回
+                    {{t .Lang "返回"}}
                 </a>
                 <a href="/compose?to={{mailEmail .message.FromAddr}}&subject={{if .message.Subject}}Re: {{.message.Subject}}{{end}}" class="tb-btn">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
-                    回复
+                    {{t .Lang "回复"}}
                 </a>
                 {{if .inTrash}}
                 <form method="POST" action="/mail/restore/{{.message.ID}}" style="display:inline;">
                     <button type="submit" class="tb-btn">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-                        恢复
+                        {{t .Lang "恢复"}}
                     </button>
                 </form>
                 <form method="POST" action="/mail/purge/{{.message.ID}}" style="display:inline;"
-                      onsubmit="return confirm('确定要彻底删除这封邮件吗？此操作不可恢复。');">
+                      onsubmit="return confirm('{{t .Lang "确定要彻底删除这封邮件吗？此操作不可恢复。"}}');">
                     <button type="submit" class="tb-btn danger">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                        彻底删除
+                        {{t .Lang "彻底删除"}}
                     </button>
                 </form>
                 {{else}}
                 <form method="POST" action="/mail/delete/{{.message.ID}}" style="display:inline;"
-                      onsubmit="return confirm('确定要删除这封邮件吗？');">
+                      onsubmit="return confirm('{{t .Lang "确定要删除这封邮件吗？"}}');">
                     <button type="submit" class="tb-btn danger">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                        删除
+                        {{t .Lang "删除"}}
                     </button>
                 </form>
                 {{end}}
             </div>
 
             <div class="mail-head">
-                <h1 class="mail-title">{{if .message.Subject}}{{.message.Subject}}{{else}}(无主题){{end}}</h1>
+                <h1 class="mail-title">{{if .message.Subject}}{{.message.Subject}}{{else}}{{t .Lang "(无主题)"}}{{end}}</h1>
                 <div class="mail-from-row">
                     <span class="avatar" style="{{avatarStyle .message.FromAddr}}">{{initial (mailName (decodeHeader .message.FromAddr))}}</span>
                     <div>
                         <div class="mail-from-name">{{mailName (decodeHeader .message.FromAddr)}}</div>
                         <div class="mail-from-addr" title="{{decodeHeader .message.FromAddr}}">{{mailEmail .message.FromAddr}}</div>
                     </div>
-                    <span class="mail-date">{{time12 .message.Date}}</span>
+                    <span class="mail-date">{{time12 .Lang .message.Date}}</span>
                 </div>
                 {{if .message.CcAddr}}
                 <div class="mail-from-addr" style="margin:-8px 0 16px 48px;">
-                    抄送：{{.message.CcAddr}}
+                    {{t .Lang "抄送："}}{{.message.CcAddr}}
                 </div>
                 {{end}}
             </div>
@@ -88,28 +88,28 @@
             <div class="view-actions">
                 <a href="/compose?to={{mailEmail .message.FromAddr}}&subject={{if .message.Subject}}Re: {{.message.Subject}}{{end}}" class="btn btn-primary">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
-                    回复
+                    {{t .Lang "回复"}}
                 </a>
                 {{if .inTrash}}
                 <form method="POST" action="/mail/restore/{{.message.ID}}" style="display:inline;">
                     <button type="submit" class="btn">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-                        恢复到收件箱
+                        {{t .Lang "恢复到收件箱"}}
                     </button>
                 </form>
                 <form method="POST" action="/mail/purge/{{.message.ID}}" style="display:inline;"
-                      onsubmit="return confirm('确定要彻底删除这封邮件吗？此操作不可恢复。');">
+                      onsubmit="return confirm('{{t .Lang "确定要彻底删除这封邮件吗？此操作不可恢复。"}}');">
                     <button type="submit" class="btn btn-danger">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                        彻底删除
+                        {{t .Lang "彻底删除"}}
                     </button>
                 </form>
                 {{else}}
                 <form method="POST" action="/mail/delete/{{.message.ID}}" style="display:inline;"
-                      onsubmit="return confirm('确定要删除这封邮件吗？');">
+                      onsubmit="return confirm('{{t .Lang "确定要删除这封邮件吗？"}}');">
                     <button type="submit" class="btn btn-danger">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                        删除邮件
+                        {{t .Lang "删除邮件"}}
                     </button>
                 </form>
                 {{end}}

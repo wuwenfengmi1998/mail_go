@@ -59,24 +59,24 @@ func TestRenderAllPages(t *testing.T) {
 		name string
 		data ginH
 	}{
-		{"login", ginH{"error": ""}},
-		{"banned", ginH{"entry": &db.BanEntry{IPAddress: "1.2.3.4", Reason: "登录失败次数过多", FailCount: 8, ExpiresAt: now.Add(20 * time.Minute)}}},
-		{"folder", ginH{"currentUser": user, "messages": messages, "total": 5, "page": 1, "totalPages": 1, "folder": "INBOX", "activeFolder": "INBOX", "isTrash": false, "folders": folders}},
-		{"folder", ginH{"currentUser": user, "messages": messages, "total": 2, "page": 1, "totalPages": 1, "folder": "Trash", "activeFolder": "Trash", "isTrash": true, "folders": folders}},
-		{"view", ginH{
+		{"login", ginH{"Lang": "zh", "error": ""}},
+		{"banned", ginH{"Lang": "zh", "entry": &db.BanEntry{IPAddress: "1.2.3.4", Reason: "登录失败次数过多", FailCount: 8, ExpiresAt: now.Add(20 * time.Minute)}}},
+		{"folder", ginH{"Lang": "zh", "currentUser": user, "messages": messages, "total": 5, "page": 1, "totalPages": 1, "folder": "INBOX", "activeFolder": "INBOX", "isTrash": false, "folders": folders}},
+		{"folder", ginH{"Lang": "zh", "currentUser": user, "messages": messages, "total": 2, "page": 1, "totalPages": 1, "folder": "Trash", "activeFolder": "Trash", "isTrash": true, "folders": folders}},
+		{"view", ginH{"Lang": "zh",
 			"currentUser": user, "activeFolder": "INBOX",
 			"message":     &db.Message{ID: 1, Folder: "INBOX", FromAddr: "=?UTF-8?B?5byg5LiJ?= <zhangsan@lmve.net>", ToAddr: "admin@lmve.net", Subject: "邮件系统部署完成通知", TextBody: "您好！您的 MailGo 邮件系统已成功部署。", HtmlBody: "", Date: now, IsRead: false},
 			"attachments": attachments, "inTrash": false, "folders": folders,
 		}},
-		{"compose", ginH{
+		{"compose", ginH{"Lang": "zh",
 			"currentUser": user, "activeFolder": "compose", "error": "",
 			"to": "zhangsan@lmve.net", "subject": "Re: 邮件系统部署完成通知", "bodyContent": "",
 			"usedBytes": int64(5 * 1024 * 1024), "quotaBytes": int64(5 * 1024 * 1024 * 1024),
 			"folders": folders,
 		}},
-		{"settings", ginH{"currentUser": user, "activeFolder": "settings", "error": "", "success": "", "folders": folders}},
-		{"admin_dashboard", ginH{"currentUser": user, "activeFolder": "admin", "domainCount": 2, "userCount": 5, "totalMails": 100, "banCount": 1, "inboxCount": 50, "sentCount": 30, "draftsCount": 10, "trashCount": 5, "inboxSize": int64(1024), "sentSize": int64(512), "totalSize": int64(2048), "todayReceived": 3, "todaySent": 2, "weekReceived": 20, "weekSent": 15}},
-		{"admin_bans", ginH{
+		{"settings", ginH{"Lang": "zh", "currentUser": user, "activeFolder": "settings", "error": "", "success": "", "folders": folders}},
+		{"admin_dashboard", ginH{"Lang": "zh", "currentUser": user, "activeFolder": "admin", "domainCount": 2, "userCount": 5, "totalMails": 100, "banCount": 1, "inboxCount": 50, "sentCount": 30, "draftsCount": 10, "trashCount": 5, "inboxSize": int64(1024), "sentSize": int64(512), "totalSize": int64(2048), "todayReceived": 3, "todaySent": 2, "weekReceived": 20, "weekSent": 15}},
+		{"admin_bans", ginH{"Lang": "zh",
 			"currentUser": user, "activeFolder": "bans",
 			"rows": []struct {
 				db.BanEntry
@@ -88,7 +88,7 @@ func TestRenderAllPages(t *testing.T) {
 			},
 			"total": 3, "page": 1, "pageSize": 20, "totalPages": 1,
 		}},
-		{"admin_protocol_logs", ginH{
+		{"admin_protocol_logs", ginH{"Lang": "zh",
 			"currentUser": user, "activeFolder": "protocol-logs",
 			"logs": []db.ProtocolLog{
 				{ID: 1, Protocol: db.ProtocolSMTP, Port: 25, ClientIP: "203.0.113.7", Username: "", Success: true, FailReason: "", Detail: "MAIL FROM:<spam@evil.example> RCPT×1 本地投递1", MsgCount: 1, DurationMs: 1234, CreatedAt: now},
@@ -109,7 +109,7 @@ func TestRenderAllPages(t *testing.T) {
 			},
 			"keepDays": 30,
 		}},
-		{"admin_connections", ginH{
+		{"admin_connections", ginH{"Lang": "zh",
 			"currentUser": user, "activeFolder": "connections",
 			"conns": []struct {
 				ID         uint64

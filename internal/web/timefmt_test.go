@@ -33,7 +33,7 @@ func TestTime12Format(t *testing.T) {
 		{"凌晨", time.Date(2026, 8, 20, 16, 0, 0, 0, time.UTC), "2026-08-21 上午 12:00:00"},
 	}
 	for _, tc := range cases {
-		if got := time12(tc.in); got != tc.want {
+		if got := time12("zh", tc.in); got != tc.want {
 			t.Errorf("time12(%s) = %q, want %q", tc.name, got, tc.want)
 		}
 	}
@@ -42,7 +42,7 @@ func TestTime12Format(t *testing.T) {
 func TestTime12mNoSeconds(t *testing.T) {
 	setWebTZForTest(t, time.FixedZone("UTC+8", 8*3600))
 	in := time.Date(2026, 8, 20, 10, 30, 45, 0, time.UTC)
-	if got, want := time12m(in), "2026-08-20 下午 6:30"; got != want {
+	if got, want := time12m("zh", in), "2026-08-20 下午 6:30"; got != want {
 		t.Fatalf("time12m = %q, want %q", got, want)
 	}
 }
@@ -53,7 +53,7 @@ func TestShortDate12Hour(t *testing.T) {
 
 	// 今天 → 「下午 2:35」（无日期）
 	today := time.Date(now.Year(), now.Month(), now.Day(), 14, 35, 0, 0, webTZ).UTC()
-	if got, want := shortDate(today), "下午 2:35"; got != want {
+	if got, want := shortDate("zh", today), "下午 2:35"; got != want {
 		t.Fatalf("shortDate(today) = %q, want %q", got, want)
 	}
 
@@ -62,13 +62,13 @@ func TestShortDate12Hour(t *testing.T) {
 	if day.YearDay() == now.YearDay() {
 		day = day.AddDate(0, 0, 1)
 	}
-	if got, want := shortDate(day.UTC()), day.Format("01-02")+" 上午 9:05"; got != want {
+	if got, want := shortDate("zh", day.UTC()), day.Format("01-02")+" 上午 9:05"; got != want {
 		t.Fatalf("shortDate(thisYear) = %q, want %q", got, want)
 	}
 
 	// 往年 → 「YYYY-MM-DD 上午 9:05」
 	older := time.Date(now.Year()-1, 12, 1, 9, 5, 0, 0, webTZ).UTC()
-	if got, want := shortDate(older), fmt.Sprintf("%d-12-01 上午 9:05", now.Year()-1); got != want {
+	if got, want := shortDate("zh", older), fmt.Sprintf("%d-12-01 上午 9:05", now.Year()-1); got != want {
 		t.Fatalf("shortDate(older) = %q, want %q", got, want)
 	}
 }

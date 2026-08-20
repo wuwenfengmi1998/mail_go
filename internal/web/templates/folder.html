@@ -1,10 +1,10 @@
 {{define "folder"}}
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{htmlLang .Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>{{folderLabel .folder}} - MailGo</title>
+    <title>{{folderLabel .Lang .folder}} - MailGo</title>
     {{template "styles" .}}
 </head>
 <body class="page-list">
@@ -13,31 +13,31 @@
         {{template "sidebar" .}}
         <main class="mail-main">
             <div class="list-toolbar">
-                <label class="check-all" title="全选/取消全选">
+                <label class="check-all" title="{{t .Lang "全选/取消全选"}}">
                     <input type="checkbox" id="select-all">
-                    全选
+                    {{t .Lang "全选"}}
                 </label>
-                <button type="button" class="tb-btn" id="btn-refresh" title="刷新">
+                <button type="button" class="tb-btn" id="btn-refresh" title="{{t .Lang "刷新"}}">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-                    刷新
+                    {{t .Lang "刷新"}}
                 </button>
                 <button type="button" class="tb-btn danger" id="btn-delete" disabled>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                    {{if .isTrash}}彻底删除{{else}}删除{{end}}
+                    {{if .isTrash}}{{t $.Lang "彻底删除"}}{{else}}{{t $.Lang "删除"}}{{end}}
                 </button>
                 {{if .isTrash}}
                 <form method="POST" action="/folder/Trash/empty" style="display:inline;"
-                      onsubmit="return confirm('确定要清空「已删除」文件夹吗？此操作不可恢复。');">
-                    <button type="submit" class="tb-btn danger">清空文件夹</button>
+                      onsubmit="return confirm('{{t $.Lang "确定要清空「已删除」文件夹吗？此操作不可恢复。"}}');">
+                    <button type="submit" class="tb-btn danger">{{t $.Lang "清空文件夹"}}</button>
                 </form>
                 {{end}}
                 <div class="toolbar-spacer"></div>
-                <span class="page-info">共 {{.total}} 封</span>
+                <span class="page-info">{{tf .Lang "共 %d 封" .total}}</span>
             </div>
 
             {{if not .messages}}
             <div class="mail-list">
-                <div class="empty-tip"><span class="empty-icon">{{if .isTrash}}🗑{{else}}📭{{end}}</span>{{folderLabel .folder}}暂无邮件</div>
+                <div class="empty-tip"><span class="empty-icon">{{if .isTrash}}🗑{{else}}📭{{end}}</span>{{folderLabel $.Lang $.folder}} · {{t $.Lang "暂无邮件"}}</div>
             </div>
             {{else}}
             <ul class="mail-list">
@@ -53,9 +53,9 @@
                         <span class="avatar" style="{{avatarStyle .FromAddr}}">{{initial (mailName (decodeHeader .FromAddr))}}</span>
                         {{end}}
                     </span>
-                    <span class="cell-from" {{if or (eq $.folder "Sent") (eq $.folder "Drafts")}}title="收件人：{{.ToAddr}}"{{else}}title="{{decodeHeader .FromAddr}}"{{end}}>
+                    <span class="cell-from" {{if or (eq $.folder "Sent") (eq $.folder "Drafts")}}title="{{tf $.Lang "收件人：%s" .ToAddr}}"{{else}}title="{{decodeHeader .FromAddr}}"{{end}}>
                         {{if or (eq $.folder "Sent") (eq $.folder "Drafts")}}
-                        {{if eq $.folder "Drafts"}}致：{{end}}{{mailName .ToAddr}}
+                        {{if eq $.folder "Drafts"}}{{t $.Lang "致："}}{{end}}{{mailName .ToAddr}}
                         {{else}}
                         {{mailName (decodeHeader .FromAddr)}}
                         {{end}}
@@ -63,24 +63,24 @@
                     <span class="cell-subject-wrap">
                         {{if not .IsRead}}<span class="unread-dot"></span>{{end}}
                         <a class="cell-subject" href="/folder/{{urlPath $.folder}}/{{.ID}}">
-                            {{if .Subject}}{{.Subject}}{{else}}(无主题){{end}}
+                            {{if .Subject}}{{.Subject}}{{else}}{{t $.Lang "(无主题)"}}{{end}}
                         </a>
                     </span>
                     <span class="cell-snippet">
-                        {{if .TextBody}}{{truncate .TextBody 80}}{{else if .HtmlBody}}[HTML 邮件]{{end}}
+                        {{if .TextBody}}{{truncate .TextBody 80}}{{else if .HtmlBody}}{{t $.Lang "[HTML 邮件]"}}{{end}}
                     </span>
-                    <span class="cell-date">{{shortDate .Date}}</span>
+                    <span class="cell-date">{{shortDate $.Lang .Date}}</span>
                     {{if $.isTrash}}
                     <form method="POST" action="/mail/restore/{{.ID}}" class="row-del"
-                          onsubmit="event.stopPropagation(); return confirm('确定要恢复这封邮件吗？');">
-                        <button type="submit" class="icon-btn" title="恢复到收件箱">
+                          onsubmit="event.stopPropagation(); return confirm('{{t $.Lang "确定要恢复这封邮件吗？"}}');">
+                        <button type="submit" class="icon-btn" title="{{t $.Lang "恢复到收件箱"}}">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
                         </button>
                     </form>
                     {{else}}
                     <form method="POST" action="/mail/delete/{{.ID}}" class="row-del"
-                          onsubmit="event.stopPropagation(); return confirm('确定要删除这封邮件吗？');">
-                        <button type="submit" class="icon-btn" title="删除">
+                          onsubmit="event.stopPropagation(); return confirm('{{t $.Lang "确定要删除这封邮件吗？"}}');">
+                        <button type="submit" class="icon-btn" title="{{t $.Lang "删除"}}">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                         </button>
                     </form>
@@ -91,23 +91,23 @@
             {{end}}
 
             <div class="list-footer">
-                <span class="page-num">第 {{.page}} / {{if .totalPages}}{{.totalPages}}{{else}}1{{end}} 页</span>
+                <span class="page-num">{{tf .Lang "第 %d / %d 页" .page (or .totalPages 1)}}</span>
                 <div class="pager">
                     {{if gt .page 1}}
                     <a class="page-btn" href="/folder/{{urlPath .folder}}?page={{sub .page 1}}">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-                        上一页
+                        {{t $.Lang "上一页"}}
                     </a>
                     {{else}}
-                    <span class="page-btn disabled">上一页</span>
+                    <span class="page-btn disabled">{{t $.Lang "上一页"}}</span>
                     {{end}}
                     {{if lt .page .totalPages}}
                     <a class="page-btn" href="/folder/{{urlPath .folder}}?page={{add .page 1}}">
-                        下一页
+                        {{t $.Lang "下一页"}}
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
                     </a>
                     {{else}}
-                    <span class="page-btn disabled">下一页</span>
+                    <span class="page-btn disabled">{{t $.Lang "下一页"}}</span>
                     {{end}}
                 </div>
             </div>

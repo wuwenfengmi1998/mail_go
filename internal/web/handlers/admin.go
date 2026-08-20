@@ -16,6 +16,7 @@ import (
 	"mail_go/internal/connhub"
 	"mail_go/internal/db"
 	"mail_go/internal/dkim"
+	"mail_go/internal/i18n"
 	"mail_go/internal/outbound"
 	"mail_go/internal/storage"
 	"mail_go/internal/store"
@@ -69,13 +70,13 @@ const manualBanDuration = 180 * 24 * time.Hour
 func (h *AdminHandler) DisconnectConnection(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.String(http.StatusBadRequest, "无效的连接ID")
+		c.String(http.StatusBadRequest, i18n.T(langOf(c), "无效的连接ID"))
 		return
 	}
 
 	conn, ok := h.hub.Get(id)
 	if !ok {
-		c.String(http.StatusNotFound, "连接不存在或已断开")
+		c.String(http.StatusNotFound, i18n.T(langOf(c), "连接不存在或已断开"))
 		return
 	}
 
@@ -83,7 +84,7 @@ func (h *AdminHandler) DisconnectConnection(c *gin.Context) {
 	// BanIP 为 upsert 语义：清理该 IP 既有观察/重复记录后仅保留一条，
 	// 避免与阶段性封禁的计数/档位记录错位。
 	if err := h.stores.Bans.BanIP(conn.IP, "管理员手动封禁（连接断开）", manualBanDuration); err != nil {
-		c.String(http.StatusInternalServerError, "封禁失败: %v", err)
+		c.String(http.StatusInternalServerError, i18n.TF(langOf(c), "封禁失败: %v", err))
 		return
 	}
 
@@ -105,7 +106,7 @@ func (h *AdminHandler) ListConnections(c *gin.Context) {
 
 	currentUser, _ := c.Get("currentUser")
 
-	c.HTML(200, "admin_connections", gin.H{
+	c.HTML(200, "admin_connections", withLang(c, gin.H{
 		"currentUser":  currentUser,
 		"conns":        conns,
 		"total":        total,
@@ -114,7 +115,7 @@ func (h *AdminHandler) ListConnections(c *gin.Context) {
 		"pop3Count":    pop3Count,
 		"now":          time.Now(),
 		"activeFolder": "connections",
-	})
+	}))
 }
 
 // Dashboard renders the admin dashboard with summary statistics.
@@ -153,7 +154,7 @@ func (h *AdminHandler) Dashboard(c *gin.Context) {
 
 	currentUser, _ := c.Get("currentUser")
 
-	c.HTML(200, "admin_dashboard", gin.H{
+	c.HTML(200, "admin_dashboard", withLang(c, gin.H{
 		"currentUser":   currentUser,
 		"domainCount":   domainCount,
 		"userCount":     userCount,
@@ -171,7 +172,7 @@ func (h *AdminHandler) Dashboard(c *gin.Context) {
 		"weekSent":      weekSent,
 		"banCount":      banCount,
 		"activeFolder":  "admin",
-	})
+	}))
 }
 
 // ListDomains renders the domain list page.
@@ -179,7 +180,7 @@ func (h *AdminHandler) ListDomains(c *gin.Context) {
 	page := getPageParam(c, "page", 1)
 	domains, total, err := h.stores.Domains.List(page, 20)
 	if err != nil {
-		c.String(http.StatusInternalServerError, "加载域名列表失败: %v", err)
+		c.String(http.StatusInternalServerError, i18n.TF(langOf(c), "加载域名列表失败: %v", err))
 		return
 	}
 
@@ -193,7 +194,7 @@ func (h *AdminHandler) ListDomains(c *gin.Context) {
 		totalPages = 0
 	}
 
-	c.HTML(200, "admin_domains", gin.H{
+	c.HTML(200, "admin_domains", withLang(c, gin.H{
 		"currentUser":  currentUser,
 		"domains":      domains,
 		"total":        total,
@@ -201,20 +202,20 @@ func (h *AdminHandler) ListDomains(c *gin.Context) {
 		"pageSize":     20,
 		"totalPages":   totalPages,
 		"activeFolder": "domains",
-	})
+	}))
 }
 
 // NewDomain renders the new domain form page.
 func (h *AdminHandler) NewDomain(c *gin.Context) {
 	currentUser, _ := c.Get("currentUser")
 
-	c.HTML(200, "admin_domain_form", gin.H{
+	c.HTML(200, "admin_domain_form", withLang(c, gin.H{
 		"currentUser":  currentUser,
 		"activeFolder": "domains",
 		"error":        "",
 		"isEdit":       false,
 		"domain":       &db.Domain{},
-	})
+	}))
 }
 
 // CreateDomain processes the new domain form submission.
@@ -227,10 +228,10 @@ func (h *AdminHandler) CreateDomain(c *gin.Context) {
 
 	if name == "" {
 		currentUser, _ := c.Get("currentUser")
-		c.HTML(http.StatusBadRequest, "admin_domain_form", gin.H{
+		c.HTML(http.StatusBadRequest, "admin_domain_form", withLang(c, gin.H{
 			"currentUser":  currentUser,
 			"activeFolder": "domains",
-			"error":        "请输入域名",
+			"error":        i18n.T(langOf(c), "请输入域名"),
 			"isEdit":       false,
 			"domain": &db.Domain{
 				Name:       name,
@@ -239,7 +240,7 @@ func (h *AdminHandler) CreateDomain(c *gin.Context) {
 				Pop3Port:   pop3Port,
 				TlsEnabled: tlsEnabled,
 			},
-		})
+		}))
 		return
 	}
 
@@ -263,13 +264,13 @@ func (h *AdminHandler) CreateDomain(c *gin.Context) {
 
 	if err := h.stores.Domains.Create(domain); err != nil {
 		currentUser, _ := c.Get("currentUser")
-		c.HTML(http.StatusBadRequest, "admin_domain_form", gin.H{
+		c.HTML(http.StatusBadRequest, "admin_domain_form", withLang(c, gin.H{
 			"currentUser":  currentUser,
 			"activeFolder": "domains",
-			"error":        fmt.Sprintf("创建域名失败: %v", err),
+			"error":        i18n.TF(langOf(c), "创建域名失败: %v", err),
 			"isEdit":       false,
 			"domain":       domain,
-		})
+		}))
 		return
 	}
 
@@ -280,13 +281,13 @@ func (h *AdminHandler) CreateDomain(c *gin.Context) {
 func (h *AdminHandler) EditDomain(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.String(http.StatusBadRequest, "无效的域名ID")
+		c.String(http.StatusBadRequest, i18n.T(langOf(c), "无效的域名ID"))
 		return
 	}
 
 	domain, err := h.stores.Domains.GetByID(uint(id))
 	if err != nil {
-		c.String(http.StatusNotFound, "域名不存在")
+		c.String(http.StatusNotFound, i18n.T(langOf(c), "域名不存在"))
 		return
 	}
 
@@ -297,11 +298,11 @@ func (h *AdminHandler) EditDomain(c *gin.Context) {
 		caddyMsg = c.Query("caddy_err")
 		caddyMsgType = "error"
 	} else if c.Query("caddy_ok") == "1" {
-		caddyMsg = "✅ 已从 Caddy 获取证书并保存到域名 TLS 目录，同时已启用该域名的 TLS；证书已热加载，无需重启服务。"
+		caddyMsg = i18n.T(langOf(c), "✅ 已从 Caddy 获取证书并保存到域名 TLS 目录，同时已启用该域名的 TLS；证书已热加载，无需重启服务。")
 		caddyMsgType = "success"
 	}
 
-	c.HTML(200, "admin_domain_form", gin.H{
+	c.HTML(200, "admin_domain_form", withLang(c, gin.H{
 		"currentUser":       currentUser,
 		"activeFolder":      "domains",
 		"error":             "",
@@ -311,20 +312,20 @@ func (h *AdminHandler) EditDomain(c *gin.Context) {
 		"tlsCertConfigured": domain.TlsCertPath != "" && domain.TlsKeyPath != "",
 		"caddyMsg":          caddyMsg,
 		"caddyMsgType":      caddyMsgType,
-	})
+	}))
 }
 
 // UpdateDomain 处理编辑域名表单提交
 func (h *AdminHandler) UpdateDomain(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.String(http.StatusBadRequest, "无效的域名ID")
+		c.String(http.StatusBadRequest, i18n.T(langOf(c), "无效的域名ID"))
 		return
 	}
 
 	domain, err := h.stores.Domains.GetByID(uint(id))
 	if err != nil {
-		c.String(http.StatusNotFound, "域名不存在")
+		c.String(http.StatusNotFound, i18n.T(langOf(c), "域名不存在"))
 		return
 	}
 
@@ -335,7 +336,7 @@ func (h *AdminHandler) UpdateDomain(c *gin.Context) {
 
 	tlsPrivateKey := strings.TrimSpace(c.PostForm("tls_private_key"))
 	tlsPublicCert := strings.TrimSpace(c.PostForm("tls_public_cert"))
-	if err := h.handleDomainTLSUpdate(domain, tlsPublicCert, tlsPrivateKey); err != nil {
+	if err := h.handleDomainTLSUpdate(langOf(c), domain, tlsPublicCert, tlsPrivateKey); err != nil {
 		h.renderDomainFormError(c, domain, err.Error(), tlsPublicCert)
 		return
 	}
@@ -351,7 +352,7 @@ func (h *AdminHandler) UpdateDomain(c *gin.Context) {
 	}
 
 	if err := h.stores.Domains.Update(domain); err != nil {
-		h.renderDomainFormError(c, domain, fmt.Sprintf("更新域名失败: %v", err), tlsPublicCert)
+		h.renderDomainFormError(c, domain, i18n.TF(langOf(c), "更新域名失败: %v", err), tlsPublicCert)
 		return
 	}
 
@@ -364,43 +365,45 @@ func (h *AdminHandler) UpdateDomain(c *gin.Context) {
 func (h *AdminHandler) FetchCaddyCert(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.String(http.StatusBadRequest, "无效的域名ID")
+		c.String(http.StatusBadRequest, i18n.T(langOf(c), "无效的域名ID"))
 		return
 	}
 
 	domain, err := h.stores.Domains.GetByID(uint(id))
 	if err != nil {
-		c.String(http.StatusNotFound, "域名不存在")
+		c.String(http.StatusNotFound, i18n.T(langOf(c), "域名不存在"))
 		return
 	}
 
+	lang := langOf(c)
 	editURL := fmt.Sprintf("/admin/domains/%d/edit", domain.ID)
-	fail := func(msg string) {
+	fail := func(key string, args ...interface{}) {
+		msg := i18n.TF(lang, key, args...)
 		log.Printf("从 Caddy 获取证书失败 domain=%s: %s", domain.Name, msg)
 		c.Redirect(http.StatusFound, editURL+"?caddy_err="+url.QueryEscape(msg))
 	}
 
 	cert, err := caddycert.Fetch(domain.Name, h.caddyCertRoots())
 	if err != nil {
-		fail(fmt.Sprintf("从 Caddy 获取证书失败: %v", err))
+		fail("从 Caddy 获取证书失败: %v", err)
 		return
 	}
 
 	// 保存到域名 TLS 目录（与手动上传证书的位置一致）
 	domainTLSDir := filepath.Join(h.tlsDir, strconv.FormatUint(uint64(domain.ID), 10))
 	if err := os.MkdirAll(domainTLSDir, 0700); err != nil {
-		fail(fmt.Sprintf("创建 TLS 证书目录失败: %v", err))
+		fail("创建 TLS 证书目录失败: %v", err)
 		return
 	}
 
 	certPath := filepath.Join(domainTLSDir, "cert.pem")
 	keyPath := filepath.Join(domainTLSDir, "key.pem")
 	if err := os.WriteFile(certPath, cert.CertPEM, 0644); err != nil {
-		fail(fmt.Sprintf("保存 TLS 公钥证书失败: %v", err))
+		fail("保存 TLS 公钥证书失败: %v", err)
 		return
 	}
 	if err := os.WriteFile(keyPath, cert.KeyPEM, 0600); err != nil {
-		fail(fmt.Sprintf("保存 TLS 私钥失败: %v", err))
+		fail("保存 TLS 私钥失败: %v", err)
 		return
 	}
 
@@ -408,7 +411,7 @@ func (h *AdminHandler) FetchCaddyCert(c *gin.Context) {
 	domain.TlsKeyPath = keyPath
 	domain.TlsEnabled = true
 	if err := h.stores.Domains.Update(domain); err != nil {
-		fail(fmt.Sprintf("更新域名记录失败: %v", err))
+		fail("更新域名记录失败: %v", err)
 		return
 	}
 
@@ -451,7 +454,7 @@ func normalizePEM(s string) string {
 	return s
 }
 
-func (h *AdminHandler) handleDomainTLSUpdate(domain *db.Domain, publicCert, privateKey string) error {
+func (h *AdminHandler) handleDomainTLSUpdate(lang string, domain *db.Domain, publicCert, privateKey string) error {
 	// 归一化换行，保证与磁盘文件一致，避免表单往返时被误判为已修改
 	publicCert = normalizePEM(strings.TrimSpace(publicCert))
 	privateKey = normalizePEM(strings.TrimSpace(privateKey))
@@ -465,31 +468,31 @@ func (h *AdminHandler) handleDomainTLSUpdate(domain *db.Domain, publicCert, priv
 		if hasExistingCert {
 			return nil
 		}
-		return fmt.Errorf("启用 TLS 时必须填写 TLS 私钥和公钥证书")
+		return fmt.Errorf("%s", i18n.T(lang, "启用 TLS 时必须填写 TLS 私钥和公钥证书"))
 	}
 	if hasExistingCert && privateKey == "" && normalizePEM(strings.TrimSpace(readTLSCert(domain.TlsCertPath))) == publicCert {
 		return nil
 	}
 	if publicCert == "" || privateKey == "" {
-		return fmt.Errorf("TLS 私钥和公钥证书必须同时填写")
+		return fmt.Errorf("%s", i18n.T(lang, "TLS 私钥和公钥证书必须同时填写"))
 	}
 
 	if _, err := tls.X509KeyPair([]byte(publicCert), []byte(privateKey)); err != nil {
-		return fmt.Errorf("TLS 证书或私钥无效: %v", err)
+		return fmt.Errorf("%s", i18n.TF(lang, "TLS 证书或私钥无效: %v", err))
 	}
 
 	domainTLSDir := filepath.Join(h.tlsDir, strconv.FormatUint(uint64(domain.ID), 10))
 	if err := os.MkdirAll(domainTLSDir, 0700); err != nil {
-		return fmt.Errorf("创建 TLS 证书目录失败: %v", err)
+		return fmt.Errorf("%s", i18n.TF(lang, "创建 TLS 证书目录失败: %v", err))
 	}
 
 	certPath := filepath.Join(domainTLSDir, "cert.pem")
 	keyPath := filepath.Join(domainTLSDir, "key.pem")
 	if err := os.WriteFile(certPath, []byte(publicCert+"\n"), 0644); err != nil {
-		return fmt.Errorf("保存 TLS 公钥证书失败: %v", err)
+		return fmt.Errorf("%s", i18n.TF(lang, "保存 TLS 公钥证书失败: %v", err))
 	}
 	if err := os.WriteFile(keyPath, []byte(privateKey+"\n"), 0600); err != nil {
-		return fmt.Errorf("保存 TLS 私钥失败: %v", err)
+		return fmt.Errorf("%s", i18n.TF(lang, "保存 TLS 私钥失败: %v", err))
 	}
 
 	domain.TlsCertPath = certPath
@@ -503,7 +506,7 @@ func (h *AdminHandler) renderDomainFormError(c *gin.Context, domain *db.Domain, 
 		tlsPublicCert = readTLSCert(domain.TlsCertPath)
 	}
 
-	c.HTML(http.StatusBadRequest, "admin_domain_form", gin.H{
+	c.HTML(http.StatusBadRequest, "admin_domain_form", withLang(c, gin.H{
 		"currentUser":       currentUser,
 		"activeFolder":      "domains",
 		"error":             message,
@@ -511,19 +514,19 @@ func (h *AdminHandler) renderDomainFormError(c *gin.Context, domain *db.Domain, 
 		"domain":            domain,
 		"tlsPublicCert":     tlsPublicCert,
 		"tlsCertConfigured": domain.TlsCertPath != "" && domain.TlsKeyPath != "",
-	})
+	}))
 }
 
 // DeleteDomain removes a domain by ID.
 func (h *AdminHandler) DeleteDomain(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.String(http.StatusBadRequest, "无效的域名ID")
+		c.String(http.StatusBadRequest, i18n.T(langOf(c), "无效的域名ID"))
 		return
 	}
 
 	if err := h.stores.Domains.Delete(uint(id)); err != nil {
-		c.String(http.StatusInternalServerError, "删除域名失败: %v", err)
+		c.String(http.StatusInternalServerError, i18n.TF(langOf(c), "删除域名失败: %v", err))
 		return
 	}
 
@@ -534,24 +537,24 @@ func (h *AdminHandler) DeleteDomain(c *gin.Context) {
 func (h *AdminHandler) DNSHint(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.String(http.StatusBadRequest, "无效的域名ID")
+		c.String(http.StatusBadRequest, i18n.T(langOf(c), "无效的域名ID"))
 		return
 	}
 
 	domain, err := h.stores.Domains.GetByID(uint(id))
 	if err != nil {
-		c.String(http.StatusNotFound, "域名不存在")
+		c.String(http.StatusNotFound, i18n.T(langOf(c), "域名不存在"))
 		return
 	}
 
 	currentUser, _ := c.Get("currentUser")
 
-	c.HTML(200, "admin_dns_hint", gin.H{
+	c.HTML(200, "admin_dns_hint", withLang(c, gin.H{
 		"currentUser":  currentUser,
 		"activeFolder": "domains",
 		"domain":       domain,
 		"dkimRecord":   dkim.GetDKIMDNSRecord(domain.DkimPublicKey),
-	})
+	}))
 }
 
 // ListUsers renders the user list page.
@@ -560,7 +563,7 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 
 	users, total, err := h.stores.Users.ListAll(page, 20)
 	if err != nil {
-		c.String(http.StatusInternalServerError, "加载用户列表失败: %v", err)
+		c.String(http.StatusInternalServerError, i18n.TF(langOf(c), "加载用户列表失败: %v", err))
 		return
 	}
 
@@ -577,7 +580,7 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 		totalPages = 0
 	}
 
-	c.HTML(200, "admin_users", gin.H{
+	c.HTML(200, "admin_users", withLang(c, gin.H{
 		"currentUser":  currentUser,
 		"users":        users,
 		"domains":      domains,
@@ -586,7 +589,7 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 		"pageSize":     20,
 		"totalPages":   totalPages,
 		"activeFolder": "users",
-	})
+	}))
 }
 
 // NewUser renders the new user form page.
@@ -595,14 +598,14 @@ func (h *AdminHandler) NewUser(c *gin.Context) {
 
 	currentUser, _ := c.Get("currentUser")
 
-	c.HTML(200, "admin_user_form", gin.H{
+	c.HTML(200, "admin_user_form", withLang(c, gin.H{
 		"currentUser":  currentUser,
 		"activeFolder": "users",
 		"error":        "",
 		"isEdit":       false,
 		"domains":      domains,
 		"user":         &db.User{},
-	})
+	}))
 }
 
 // CreateUser processes the new user form submission.
@@ -616,10 +619,10 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 	if username == "" || password == "" || domainID == 0 {
 		domains, _, _ := h.stores.Domains.List(1, 1000)
 		currentUser, _ := c.Get("currentUser")
-		c.HTML(http.StatusBadRequest, "admin_user_form", gin.H{
+		c.HTML(http.StatusBadRequest, "admin_user_form", withLang(c, gin.H{
 			"currentUser":  currentUser,
 			"activeFolder": "users",
-			"error":        "请填写所有必填字段",
+			"error":        i18n.T(langOf(c), "请填写所有必填字段"),
 			"isEdit":       false,
 			"domains":      domains,
 			"user": &db.User{
@@ -627,7 +630,7 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 				DomainID: domainID,
 				IsAdmin:  isAdmin,
 			},
-		})
+		}))
 		return
 	}
 
@@ -636,10 +639,10 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 	if err != nil {
 		domains, _, _ := h.stores.Domains.List(1, 1000)
 		currentUser, _ := c.Get("currentUser")
-		c.HTML(http.StatusInternalServerError, "admin_user_form", gin.H{
+		c.HTML(http.StatusInternalServerError, "admin_user_form", withLang(c, gin.H{
 			"currentUser":  currentUser,
 			"activeFolder": "users",
-			"error":        "密码加密失败",
+			"error":        i18n.T(langOf(c), "密码加密失败"),
 			"isEdit":       false,
 			"domains":      domains,
 			"user": &db.User{
@@ -647,7 +650,7 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 				DomainID: domainID,
 				IsAdmin:  isAdmin,
 			},
-		})
+		}))
 		return
 	}
 
@@ -661,19 +664,20 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 		UsedBytes:    0,
 		IsActive:     true,
 		IsAdmin:      isAdmin,
+		Language:     normLang(c.PostForm("language")),
 	}
 
 	if err := h.stores.Users.Create(user); err != nil {
 		domains, _, _ := h.stores.Domains.List(1, 1000)
 		currentUser, _ := c.Get("currentUser")
-		c.HTML(http.StatusBadRequest, "admin_user_form", gin.H{
+		c.HTML(http.StatusBadRequest, "admin_user_form", withLang(c, gin.H{
 			"currentUser":  currentUser,
 			"activeFolder": "users",
-			"error":        fmt.Sprintf("创建用户失败: %v", err),
+			"error":        i18n.TF(langOf(c), "创建用户失败: %v", err),
 			"isEdit":       false,
 			"domains":      domains,
 			"user":         user,
-		})
+		}))
 		return
 	}
 
@@ -684,18 +688,18 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 func (h *AdminHandler) DeleteUser(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.String(http.StatusBadRequest, "无效的用户ID")
+		c.String(http.StatusBadRequest, i18n.T(langOf(c), "无效的用户ID"))
 		return
 	}
 
 	currentUser, _ := c.Get("currentUser")
 	if currentUser.(*db.User).ID == uint(id) {
-		c.String(http.StatusBadRequest, "不能删除自己的账户")
+		c.String(http.StatusBadRequest, i18n.T(langOf(c), "不能删除自己的账户"))
 		return
 	}
 
 	if err := h.stores.Users.Delete(uint(id)); err != nil {
-		c.String(http.StatusInternalServerError, "删除用户失败: %v", err)
+		c.String(http.StatusInternalServerError, i18n.TF(langOf(c), "删除用户失败: %v", err))
 		return
 	}
 
@@ -706,40 +710,40 @@ func (h *AdminHandler) DeleteUser(c *gin.Context) {
 func (h *AdminHandler) EditUser(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.String(http.StatusBadRequest, "无效的用户ID")
+		c.String(http.StatusBadRequest, i18n.T(langOf(c), "无效的用户ID"))
 		return
 	}
 
 	user, err := h.stores.Users.GetByID(uint(id))
 	if err != nil {
-		c.String(http.StatusNotFound, "用户不存在")
+		c.String(http.StatusNotFound, i18n.T(langOf(c), "用户不存在"))
 		return
 	}
 
 	domains, _, _ := h.stores.Domains.List(1, 1000)
 	currentUser, _ := c.Get("currentUser")
 
-	c.HTML(200, "admin_user_form", gin.H{
+	c.HTML(200, "admin_user_form", withLang(c, gin.H{
 		"currentUser":  currentUser,
 		"activeFolder": "users",
 		"error":        "",
 		"isEdit":       true,
 		"domains":      domains,
 		"user":         user,
-	})
+	}))
 }
 
 // UpdateUser processes the edit user form submission.
 func (h *AdminHandler) UpdateUser(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.String(http.StatusBadRequest, "无效的用户ID")
+		c.String(http.StatusBadRequest, i18n.T(langOf(c), "无效的用户ID"))
 		return
 	}
 
 	user, err := h.stores.Users.GetByID(uint(id))
 	if err != nil {
-		c.String(http.StatusNotFound, "用户不存在")
+		c.String(http.StatusNotFound, i18n.T(langOf(c), "用户不存在"))
 		return
 	}
 
@@ -757,6 +761,10 @@ func (h *AdminHandler) UpdateUser(c *gin.Context) {
 	user.QuotaBytes = int64(quotaGB) * 1024 * 1024 * 1024
 	user.IsActive = isActive
 	user.IsAdmin = isAdmin
+	// 界面语言偏好（表单未提交时保持原值）
+	if lang := c.PostForm("language"); lang != "" {
+		user.Language = normLang(lang)
+	}
 
 	// Update password only if a new one is provided
 	if password != "" {
@@ -764,14 +772,14 @@ func (h *AdminHandler) UpdateUser(c *gin.Context) {
 		if err != nil {
 			domains, _, _ := h.stores.Domains.List(1, 1000)
 			currentUser, _ := c.Get("currentUser")
-			c.HTML(http.StatusInternalServerError, "admin_user_form", gin.H{
+			c.HTML(http.StatusInternalServerError, "admin_user_form", withLang(c, gin.H{
 				"currentUser":  currentUser,
 				"activeFolder": "users",
-				"error":        "密码加密失败",
+				"error":        i18n.T(langOf(c), "密码加密失败"),
 				"isEdit":       true,
 				"domains":      domains,
 				"user":         user,
-			})
+			}))
 			return
 		}
 		user.PasswordHash = string(hashedPassword)
@@ -782,14 +790,14 @@ func (h *AdminHandler) UpdateUser(c *gin.Context) {
 	if err := h.stores.Users.Update(user); err != nil {
 		domains, _, _ := h.stores.Domains.List(1, 1000)
 		currentUser, _ := c.Get("currentUser")
-		c.HTML(http.StatusBadRequest, "admin_user_form", gin.H{
+		c.HTML(http.StatusBadRequest, "admin_user_form", withLang(c, gin.H{
 			"currentUser":  currentUser,
 			"activeFolder": "users",
-			"error":        fmt.Sprintf("更新用户失败: %v", err),
+			"error":        i18n.TF(langOf(c), "更新用户失败: %v", err),
 			"isEdit":       true,
 			"domains":      domains,
 			"user":         user,
-		})
+		}))
 		return
 	}
 
@@ -802,7 +810,7 @@ func (h *AdminHandler) ListBans(c *gin.Context) {
 
 	bans, total, err := h.stores.Bans.List(page, 20)
 	if err != nil {
-		c.String(http.StatusInternalServerError, "加载黑名单失败: %v", err)
+		c.String(http.StatusInternalServerError, i18n.TF(langOf(c), "加载黑名单失败: %v", err))
 		return
 	}
 
@@ -823,7 +831,7 @@ func (h *AdminHandler) ListBans(c *gin.Context) {
 		totalPages = 0
 	}
 
-	c.HTML(200, "admin_bans", gin.H{
+	c.HTML(200, "admin_bans", withLang(c, gin.H{
 		"currentUser":  currentUser,
 		"rows":         rows,
 		"total":        total,
@@ -831,7 +839,7 @@ func (h *AdminHandler) ListBans(c *gin.Context) {
 		"pageSize":     20,
 		"totalPages":   totalPages,
 		"activeFolder": "bans",
-	})
+	}))
 }
 
 // banRow 是黑名单列表行：附带了当前是否封禁中的标记。
@@ -844,12 +852,12 @@ type banRow struct {
 func (h *AdminHandler) UnbanIP(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.String(http.StatusBadRequest, "无效的记录ID")
+		c.String(http.StatusBadRequest, i18n.T(langOf(c), "无效的记录ID"))
 		return
 	}
 
 	if err := h.stores.Bans.Delete(uint(id)); err != nil {
-		c.String(http.StatusInternalServerError, "解封失败: %v", err)
+		c.String(http.StatusInternalServerError, i18n.TF(langOf(c), "解封失败: %v", err))
 		return
 	}
 
@@ -892,7 +900,7 @@ func (h *AdminHandler) ListProtocolLogs(c *gin.Context) {
 
 	logs, total, err := h.stores.ProtocolLogs.List(page, pageSize, filter)
 	if err != nil {
-		c.String(http.StatusInternalServerError, "加载协议日志失败: %v", err)
+		c.String(http.StatusInternalServerError, i18n.TF(langOf(c), "加载协议日志失败: %v", err))
 		return
 	}
 
@@ -928,7 +936,7 @@ func (h *AdminHandler) ListProtocolLogs(c *gin.Context) {
 		"to":       url.QueryEscape(c.Query("to")),
 	}
 
-	c.HTML(200, "admin_protocol_logs", gin.H{
+	c.HTML(200, "admin_protocol_logs", withLang(c, gin.H{
 		"currentUser":  currentUser,
 		"logs":         logs,
 		"total":        total,
@@ -940,7 +948,7 @@ func (h *AdminHandler) ListProtocolLogs(c *gin.Context) {
 		"allStats":     normStats(allStats),
 		"keepDays":     h.protocolLogKeepDays,
 		"activeFolder": "protocol-logs",
-	})
+	}))
 }
 
 // CleanupProtocolLogs 手动清理超出保留天数的协议日志。
@@ -978,7 +986,7 @@ func (h *AdminHandler) ListMails(c *gin.Context) {
 	}
 
 	if err != nil {
-		c.String(http.StatusInternalServerError, "加载邮件列表失败: %v", err)
+		c.String(http.StatusInternalServerError, i18n.TF(langOf(c), "加载邮件列表失败: %v", err))
 		return
 	}
 
@@ -992,7 +1000,7 @@ func (h *AdminHandler) ListMails(c *gin.Context) {
 		totalPages = 0
 	}
 
-	c.HTML(200, "admin_mails", gin.H{
+	c.HTML(200, "admin_mails", withLang(c, gin.H{
 		"currentUser":  currentUser,
 		"messages":     messages,
 		"total":        total,
@@ -1001,20 +1009,20 @@ func (h *AdminHandler) ListMails(c *gin.Context) {
 		"totalPages":   totalPages,
 		"folder":       folder,
 		"activeFolder": "mails",
-	})
+	}))
 }
 
 // AdminViewMail renders the detail view of a specific mail for admin.
 func (h *AdminHandler) AdminViewMail(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.String(http.StatusBadRequest, "无效的邮件ID")
+		c.String(http.StatusBadRequest, i18n.T(langOf(c), "无效的邮件ID"))
 		return
 	}
 
 	msg, err := h.stores.Mails.GetByID(uint(id))
 	if err != nil {
-		c.String(http.StatusNotFound, "邮件不存在")
+		c.String(http.StatusNotFound, i18n.T(langOf(c), "邮件不存在"))
 		return
 	}
 
@@ -1023,31 +1031,31 @@ func (h *AdminHandler) AdminViewMail(c *gin.Context) {
 
 	currentUser, _ := c.Get("currentUser")
 
-	c.HTML(200, "admin_mail_view", gin.H{
+	c.HTML(200, "admin_mail_view", withLang(c, gin.H{
 		"currentUser":  currentUser,
 		"message":      msg,
 		"attachments":  attachments,
 		"activeFolder": "mails",
-	})
+	}))
 }
 
 // AdminDownloadAttachment serves an attachment file for admin (bypasses user ownership check).
 func (h *AdminHandler) AdminDownloadAttachment(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.String(http.StatusBadRequest, "无效的附件ID")
+		c.String(http.StatusBadRequest, i18n.T(langOf(c), "无效的附件ID"))
 		return
 	}
 
 	att, err := h.stores.Attachments.GetByID(uint(id))
 	if err != nil {
-		c.String(http.StatusNotFound, "附件不存在")
+		c.String(http.StatusNotFound, i18n.T(langOf(c), "附件不存在"))
 		return
 	}
 
 	data, err := h.storage.Read(att.FilePath)
 	if err != nil {
-		c.String(http.StatusInternalServerError, "读取附件失败")
+		c.String(http.StatusInternalServerError, i18n.T(langOf(c), "读取附件失败"))
 		return
 	}
 
@@ -1062,7 +1070,7 @@ func (h *AdminHandler) ListOutbound(c *gin.Context) {
 
 	items, total, err := h.stores.Outbound.List(page, 20, status)
 	if err != nil {
-		c.String(http.StatusInternalServerError, "加载外发队列失败: %v", err)
+		c.String(http.StatusInternalServerError, i18n.TF(langOf(c), "加载外发队列失败: %v", err))
 		return
 	}
 
@@ -1088,7 +1096,7 @@ func (h *AdminHandler) ListOutbound(c *gin.Context) {
 
 	currentUser, _ := c.Get("currentUser")
 
-	c.HTML(200, "admin_outbound", gin.H{
+	c.HTML(200, "admin_outbound", withLang(c, gin.H{
 		"currentUser":  currentUser,
 		"items":        items,
 		"total":        total,
@@ -1099,23 +1107,23 @@ func (h *AdminHandler) ListOutbound(c *gin.Context) {
 		"statCounts":   statCounts,
 		"statusText":   outbound.StatusText,
 		"activeFolder": "outbound",
-	})
+	}))
 }
 
 // RetryOutbound resets an outbound queue item for immediate redelivery.
 func (h *AdminHandler) RetryOutbound(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.String(http.StatusBadRequest, "无效的队列ID")
+		c.String(http.StatusBadRequest, i18n.T(langOf(c), "无效的队列ID"))
 		return
 	}
 
 	if h.outbound == nil {
-		c.String(http.StatusInternalServerError, "外发服务不可用")
+		c.String(http.StatusInternalServerError, i18n.T(langOf(c), "外发服务不可用"))
 		return
 	}
 	if err := h.outbound.Retry(uint(id)); err != nil {
-		c.String(http.StatusInternalServerError, "重试失败: %v", err)
+		c.String(http.StatusInternalServerError, i18n.TF(langOf(c), "重试失败: %v", err))
 		return
 	}
 
@@ -1126,16 +1134,16 @@ func (h *AdminHandler) RetryOutbound(c *gin.Context) {
 func (h *AdminHandler) CancelOutbound(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.String(http.StatusBadRequest, "无效的队列ID")
+		c.String(http.StatusBadRequest, i18n.T(langOf(c), "无效的队列ID"))
 		return
 	}
 
 	if h.outbound == nil {
-		c.String(http.StatusInternalServerError, "外发服务不可用")
+		c.String(http.StatusInternalServerError, i18n.T(langOf(c), "外发服务不可用"))
 		return
 	}
 	if err := h.outbound.Cancel(uint(id)); err != nil {
-		c.String(http.StatusInternalServerError, "取消失败: %v", err)
+		c.String(http.StatusInternalServerError, i18n.TF(langOf(c), "取消失败: %v", err))
 		return
 	}
 

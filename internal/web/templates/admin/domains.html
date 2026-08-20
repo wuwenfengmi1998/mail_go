@@ -1,10 +1,10 @@
 {{define "admin_domains"}}
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{htmlLang .Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>域名管理 - MailGo</title>
+    <title>{{t .Lang "域名管理"}} - MailGo</title>
     {{template "styles" .}}
 </head>
 <body>
@@ -12,35 +12,35 @@
     <div class="container">
         <div class="clearfix">
             <div class="sidebar">
-                <a href="/inbox">返回邮箱</a>
-                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>控制面板</a>
-                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>域名管理</a>
-                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>用户管理</a>
-                <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>所有邮件</a>
-                <a href="/admin/outbound" {{if eq .activeFolder "outbound"}}class="active"{{end}}>外发队列</a>
-                                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>协议日志</a>
-                <a href="/admin/connections" {{if eq .activeFolder "connections"}}class="active"{{end}}>当前连接</a>
-<a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>IP黑名单</a>
+                <a href="/inbox">{{t .Lang "返回邮箱"}}</a>
+                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>{{t .Lang "控制面板"}}</a>
+                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>{{t .Lang "域名管理"}}</a>
+                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>{{t .Lang "用户管理"}}</a>
+                <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>{{t .Lang "所有邮件"}}</a>
+                <a href="/admin/outbound" {{if eq .activeFolder "outbound"}}class="active"{{end}}>{{t .Lang "外发队列"}}</a>
+                                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>{{t .Lang "协议日志"}}</a>
+                <a href="/admin/connections" {{if eq .activeFolder "connections"}}class="active"{{end}}>{{t .Lang "当前连接"}}</a>
+<a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>{{t .Lang "IP黑名单"}}</a>
             </div>
             <div class="content">
                 <div class="card">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-                        <h2>域名列表</h2>
-                        <a href="/admin/domains/new" class="btn btn-primary">新增域名</a>
+                        <h2>{{t .Lang "域名列表"}}</h2>
+                        <a href="/admin/domains/new" class="btn btn-primary">{{t .Lang "新增域名"}}</a>
                     </div>
                     {{if not .domains}}
-                    <p style="color:#7f8c8d;text-align:center;padding:40px 0;">暂无域名</p>
+                    <p style="color:#7f8c8d;text-align:center;padding:40px 0;">{{t $.Lang "暂无域名"}}</p>
                     {{else}}
                     <table>
                         <thead>
                             <tr>
                                 <th>ID</th>
-                                <th>域名</th>
+                                <th>{{t $.Lang "域名"}}</th>
                                 <th>SMTP</th>
                                 <th>IMAP</th>
                                 <th>POP3</th>
                                 <th>TLS</th>
-                                <th>操作</th>
+                                <th>{{t $.Lang "操作"}}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -53,11 +53,11 @@
                                 <td>{{.Pop3Port}}</td>
                                 <td>{{if .TlsEnabled}}✅{{else}}❌{{end}}</td>
                                 <td>
-                                    <a href="/admin/domains/{{.ID}}/edit" class="btn btn-primary btn-sm">编辑</a>
+                                    <a href="/admin/domains/{{.ID}}/edit" class="btn btn-primary btn-sm">{{t $.Lang "编辑"}}</a>
                                     <a href="/admin/domains/{{.ID}}/dns" class="btn btn-primary btn-sm">DNS</a>
                                     <form method="POST" action="/admin/domains/{{.ID}}/delete" style="display:inline;"
-                                          onsubmit="return confirm('确定要删除域名 {{.Name}} 吗？删除域名将导致关联用户无法收发邮件！');">
-                                        <button type="submit" class="btn btn-danger btn-sm">删除</button>
+                                          onsubmit="return confirm('{{tf $.Lang "确定要删除域名 %s 吗？删除域名将导致关联用户无法收发邮件！" .Name}}');">
+                                        <button type="submit" class="btn btn-danger btn-sm">{{t $.Lang "删除"}}</button>
                                     </form>
                                 </td>
                             </tr>
@@ -69,11 +69,11 @@
                 {{if .totalPages}}
                 <div class="pagination">
                     {{if gt .page 1}}
-                    <a href="/admin/domains?page={{sub .page 1}}">上一页</a>
+                    <a href="/admin/domains?page={{sub .page 1}}">{{t $.Lang "上一页"}}</a>
                     {{end}}
-                    <span>第 {{.page}} / {{.totalPages}} 页</span>
+                    <span>{{tf $.Lang "第 %d / %d 页" .page .totalPages}}</span>
                     {{if lt .page .totalPages}}
-                    <a href="/admin/domains?page={{add .page 1}}">下一页</a>
+                    <a href="/admin/domains?page={{add .page 1}}">{{t $.Lang "下一页"}}</a>
                     {{end}}
                 </div>
                 {{end}}

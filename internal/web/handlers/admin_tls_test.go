@@ -83,7 +83,7 @@ func TestHandleDomainTLSUpdateUnchangedCertCRLF(t *testing.T) {
 	domain := writeExistingCert(t, h.tlsDir, certLF, keyLF)
 
 	submittedCert := strings.ReplaceAll(certLF, "\n", "\r\n") // 模拟浏览器提交
-	if err := h.handleDomainTLSUpdate(domain, submittedCert, ""); err != nil {
+	if err := h.handleDomainTLSUpdate("zh", domain, submittedCert, ""); err != nil {
 		t.Fatalf("证书未修改且私钥留空时应保留现有私钥，实际报错: %v", err)
 	}
 }
@@ -95,7 +95,7 @@ func TestHandleDomainTLSUpdateNewPairCRLF(t *testing.T) {
 	h := &AdminHandler{tlsDir: t.TempDir()}
 	domain := &db.Domain{ID: 1, Name: "mail.example.com", TlsEnabled: true}
 
-	if err := h.handleDomainTLSUpdate(domain, certCRLF, keyCRLF); err != nil {
+	if err := h.handleDomainTLSUpdate("zh", domain, certCRLF, keyCRLF); err != nil {
 		t.Fatalf("CRLF 提交的新证书应保存成功，实际报错: %v", err)
 	}
 
@@ -119,7 +119,7 @@ func TestHandleDomainTLSUpdateChangedCertWithoutKey(t *testing.T) {
 	h := &AdminHandler{tlsDir: t.TempDir()}
 	domain := writeExistingCert(t, h.tlsDir, certA, keyA)
 
-	err := h.handleDomainTLSUpdate(domain, certB, "")
+	err := h.handleDomainTLSUpdate("zh", domain, certB, "")
 	if err == nil || !strings.Contains(err.Error(), "必须同时填写") {
 		t.Fatalf("修改证书但私钥留空应报“必须同时填写”，实际: %v", err)
 	}

@@ -1,10 +1,10 @@
 {{define "admin_domain_form"}}
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{htmlLang .Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>{{if .isEdit}}编辑域名{{else}}新增域名{{end}} - MailGo</title>
+    <title>{{if .isEdit}}{{t .Lang "编辑域名"}}{{else}}{{t .Lang "新增域名"}}{{end}} - MailGo</title>
     {{template "styles" .}}
 </head>
 <body>
@@ -12,24 +12,24 @@
     <div class="container">
         <div class="clearfix">
             <div class="sidebar">
-                <a href="/inbox">返回邮箱</a>
-                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>控制面板</a>
-                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>域名管理</a>
-                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>用户管理</a>
-                <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>所有邮件</a>
-                <a href="/admin/outbound" {{if eq .activeFolder "outbound"}}class="active"{{end}}>外发队列</a>
-                                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>协议日志</a>
-                <a href="/admin/connections" {{if eq .activeFolder "connections"}}class="active"{{end}}>当前连接</a>
-<a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>IP黑名单</a>
+                <a href="/inbox">{{t .Lang "返回邮箱"}}</a>
+                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>{{t .Lang "控制面板"}}</a>
+                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>{{t .Lang "域名管理"}}</a>
+                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>{{t .Lang "用户管理"}}</a>
+                <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>{{t .Lang "所有邮件"}}</a>
+                <a href="/admin/outbound" {{if eq .activeFolder "outbound"}}class="active"{{end}}>{{t .Lang "外发队列"}}</a>
+                                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>{{t .Lang "协议日志"}}</a>
+                <a href="/admin/connections" {{if eq .activeFolder "connections"}}class="active"{{end}}>{{t .Lang "当前连接"}}</a>
+<a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>{{t .Lang "IP黑名单"}}</a>
             </div>
             <div class="content">
                 <div class="card">
-                    <h2 style="margin-bottom:16px;">{{if .isEdit}}编辑域名{{else}}新增域名{{end}}</h2>
+                    <h2 style="margin-bottom:16px;">{{if .isEdit}}{{t .Lang "编辑域名"}}{{else}}{{t .Lang "新增域名"}}{{end}}</h2>
                     {{if .error}}<div class="alert alert-error">{{.error}}</div>{{end}}
                     {{if .caddyMsg}}<div class="alert {{if eq .caddyMsgType "success"}}alert-success{{else}}alert-error{{end}}">{{.caddyMsg}}</div>{{end}}
                     <form method="POST" action="{{if .isEdit}}/admin/domains/{{.domain.ID}}{{else}}/admin/domains{{end}}">
                         <div class="form-group">
-                            <label>域名</label>
+                            <label>{{t .Lang "域名"}}</label>
                             {{if .isEdit}}
                             <input type="text" name="name" value="{{.domain.Name}}" disabled style="background:#f5f5f5;">
                             {{else}}
@@ -37,45 +37,45 @@
                             {{end}}
                         </div>
                         <div class="form-group">
-                            <label>SMTP 端口</label>
+                            <label>{{t .Lang "SMTP 端口"}}</label>
                             <input type="number" name="smtp_port" value="{{.domain.SmtpPort}}" placeholder="25">
                         </div>
                         <div class="form-group">
-                            <label>IMAP 端口</label>
+                            <label>{{t .Lang "IMAP 端口"}}</label>
                             <input type="number" name="imap_port" value="{{.domain.ImapPort}}" placeholder="143">
                         </div>
                         <div class="form-group">
-                            <label>POP3 端口</label>
+                            <label>{{t .Lang "POP3 端口"}}</label>
                             <input type="number" name="pop3_port" value="{{.domain.Pop3Port}}" placeholder="110">
                         </div>
                         <div class="form-group">
                             <label>
                                 <input type="checkbox" name="tls_enabled" id="tls_enabled" {{if .domain.TlsEnabled}}checked{{end}} onchange="togglePorts()">
-                                启用 TLS
+                                {{t .Lang "启用 TLS"}}
                             </label>
-                            <p style="color:#7f8c8d;font-size:12px;margin-top:4px;">勾选后端口将自动切换为 SSL/TLS 标准端口</p>
+                            <p style="color:#7f8c8d;font-size:12px;margin-top:4px;">{{t .Lang "勾选后端口将自动切换为 SSL/TLS 标准端口"}}</p>
                         </div>
                         {{if .isEdit}}
                         <div id="tls_cert_fields" style="display:none;">
                             <div class="form-group">
-                                <label>TLS 私钥 PEM</label>
+                                <label>{{t .Lang "TLS 私钥 PEM"}}</label>
                                 <textarea name="tls_private_key" rows="8" placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----" style="font-family:monospace;"></textarea>
-                                <p style="color:#7f8c8d;font-size:12px;margin-top:4px;">私钥不会回显；留空则保留现有私钥。</p>
+                                <p style="color:#7f8c8d;font-size:12px;margin-top:4px;">{{t .Lang "私钥不会回显；留空则保留现有私钥。"}}</p>
                             </div>
                             <div class="form-group">
-                                <label>TLS 公钥证书 PEM</label>
+                                <label>{{t .Lang "TLS 公钥证书 PEM"}}</label>
                                 <textarea name="tls_public_cert" rows="8" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----" style="font-family:monospace;">{{.tlsPublicCert}}</textarea>
                                 {{if .tlsCertConfigured}}
-                                <p style="color:#27ae60;font-size:12px;margin-top:4px;">✅ TLS 证书已配置；上传新证书后自动热加载生效。</p>
+                                <p style="color:#27ae60;font-size:12px;margin-top:4px;">{{t .Lang "✅ TLS 证书已配置；上传新证书后自动热加载生效。"}}</p>
                                 {{else}}
-                                <p style="color:#e67e22;font-size:12px;margin-top:4px;">⚠️ TLS 证书未配置，启用 TLS 时必须同时填写私钥和证书。</p>
+                                <p style="color:#e67e22;font-size:12px;margin-top:4px;">{{t .Lang "⚠️ TLS 证书未配置，启用 TLS 时必须同时填写私钥和证书。"}}</p>
                                 {{end}}
                             </div>
                         </div>
                         <div class="form-group" style="margin-top:4px;">
-                            <label>从 Caddy 获取证书</label>
-                            <p style="color:#7f8c8d;font-size:12px;margin-top:2px;margin-bottom:8px;">若该域名已由本机 Caddy 托管 HTTPS（自动签发证书），可一键导入其证书与私钥，并自动启用 TLS；证书热加载，无需重启服务。</p>
-                            <button type="button" class="btn" id="btn_fetch_caddy" onclick="fetchCaddyCert()" style="background:#2e86de;color:#fff;">🔒 从 Caddy 获取证书</button>
+                            <label>{{t .Lang "从 Caddy 获取证书"}}</label>
+                            <p style="color:#7f8c8d;font-size:12px;margin-top:2px;margin-bottom:8px;">{{t .Lang "若该域名已由本机 Caddy 托管 HTTPS（自动签发证书），可一键导入其证书与私钥，并自动启用 TLS；证书热加载，无需重启服务。"}}</p>
+                            <button type="button" class="btn" id="btn_fetch_caddy" onclick="fetchCaddyCert()" style="background:#2e86de;color:#fff;">{{t .Lang "🔒 从 Caddy 获取证书"}}</button>
                             <span id="caddy_fetch_msg" style="margin-left:10px;font-size:12px;color:#7f8c8d;"></span>
                             <script>
                             async function fetchCaddyCert() {
@@ -83,7 +83,7 @@
                                 var msg = document.getElementById('caddy_fetch_msg');
                                 btn.disabled = true;
                                 var oldText = btn.textContent;
-                                btn.textContent = '获取中…';
+                                btn.textContent = '{{t .Lang "获取中…"}}';
                                 msg.textContent = '';
                                 try {
                                     var resp = await fetch('/admin/domains/{{.domain.ID}}/fetch-caddy-cert', { method: 'POST' });
@@ -91,9 +91,9 @@
                                         window.location.href = resp.url;
                                         return;
                                     }
-                                    msg.textContent = '获取失败: ' + await resp.text();
+                                    msg.textContent = '{{t .Lang "获取失败"}}: ' + await resp.text();
                                 } catch (e) {
-                                    msg.textContent = '请求失败: ' + e;
+                                    msg.textContent = '{{t .Lang "请求失败"}}: ' + e;
                                 }
                                 btn.disabled = false;
                                 btn.textContent = oldText;
@@ -118,17 +118,17 @@
                         <div class="form-group">
                             <label>
                                 <input type="checkbox" name="regenerate_dkim">
-                                重新生成 DKIM 密钥
+                                {{t .Lang "重新生成 DKIM 密钥"}}
                             </label>
                             {{if .domain.DkimPublicKey}}
-                            <p style="color:#27ae60;font-size:12px;margin-top:4px;">✅ DKIM 密钥已配置</p>
+                            <p style="color:#27ae60;font-size:12px;margin-top:4px;">{{t .Lang "✅ DKIM 密钥已配置"}}</p>
                             {{else}}
-                            <p style="color:#e67e22;font-size:12px;margin-top:4px;">⚠️ DKIM 密钥未配置</p>
+                            <p style="color:#e67e22;font-size:12px;margin-top:4px;">{{t .Lang "⚠️ DKIM 密钥未配置"}}</p>
                             {{end}}
                         </div>
                         {{end}}
-                        <button type="submit" class="btn btn-primary">{{if .isEdit}}保存更改{{else}}创建域名{{end}}</button>
-                        <a href="/admin/domains" class="btn" style="margin-left:8px;background:#bdc3c7;color:#fff;">取消</a>
+                        <button type="submit" class="btn btn-primary">{{if .isEdit}}{{t .Lang "保存更改"}}{{else}}{{t .Lang "创建域名"}}{{end}}</button>
+                        <a href="/admin/domains" class="btn" style="margin-left:8px;background:#bdc3c7;color:#fff;">{{t .Lang "取消"}}</a>
                     </form>
                 </div>
             </div>

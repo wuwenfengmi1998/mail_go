@@ -1,10 +1,10 @@
 {{define "admin_protocol_logs"}}
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{htmlLang .Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>协议日志 - MailGo</title>
+    <title>{{t .Lang "协议日志"}} - MailGo</title>
     {{template "styles" .}}
 </head>
 <body>
@@ -12,41 +12,41 @@
     <div class="container">
         <div class="clearfix">
             <div class="sidebar">
-                <a href="/inbox">返回邮箱</a>
-                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>控制面板</a>
-                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>域名管理</a>
-                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>用户管理</a>
-                <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>所有邮件</a>
-                <a href="/admin/outbound" {{if eq .activeFolder "outbound"}}class="active"{{end}}>外发队列</a>
-                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>协议日志</a>
-                                <a href="/admin/connections" {{if eq .activeFolder "connections"}}class="active"{{end}}>当前连接</a>
-<a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>IP黑名单</a>
+                <a href="/inbox">{{t .Lang "返回邮箱"}}</a>
+                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>{{t .Lang "控制面板"}}</a>
+                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>{{t .Lang "域名管理"}}</a>
+                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>{{t .Lang "用户管理"}}</a>
+                <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>{{t .Lang "所有邮件"}}</a>
+                <a href="/admin/outbound" {{if eq .activeFolder "outbound"}}class="active"{{end}}>{{t .Lang "外发队列"}}</a>
+                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>{{t .Lang "协议日志"}}</a>
+                                <a href="/admin/connections" {{if eq .activeFolder "connections"}}class="active"{{end}}>{{t .Lang "当前连接"}}</a>
+<a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>{{t .Lang "IP黑名单"}}</a>
             </div>
             <div class="content">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-                    <h2>协议日志（SMTP / IMAP / POP3）</h2>
+                    <h2>{{t .Lang "协议日志（SMTP / IMAP / POP3）"}}</h2>
                     <form method="POST" action="/admin/protocol-logs/cleanup" style="display:inline;"
-                          onsubmit="return confirm('确认清理 {{.keepDays}} 天前的协议日志？');">
-                        <button type="submit" class="btn btn-primary">清理旧日志</button>
+                          onsubmit="return confirm('{{tf .Lang "确认清理 %d 天前的协议日志？" .keepDays}}');">
+                        <button type="submit" class="btn btn-primary">{{t .Lang "清理旧日志"}}</button>
                     </form>
                 </div>
 
                 <div style="margin-bottom:24px;">
                     <div class="stat-card">
                         <h3>{{index .todayStats "smtp" "fail"}}</h3>
-                        <p>今日 SMTP 失败</p>
+                        <p>{{t .Lang "今日 SMTP 失败"}}</p>
                     </div>
                     <div class="stat-card">
                         <h3>{{index .todayStats "imap" "fail"}}</h3>
-                        <p>今日 IMAP 失败</p>
+                        <p>{{t .Lang "今日 IMAP 失败"}}</p>
                     </div>
                     <div class="stat-card">
                         <h3>{{index .todayStats "pop3" "fail"}}</h3>
-                        <p>今日 POP3 失败</p>
+                        <p>{{t .Lang "今日 POP3 失败"}}</p>
                     </div>
                     <div class="stat-card">
                         <h3>{{add (add (index .allStats "smtp" "fail") (index .allStats "imap" "fail")) (index .allStats "pop3" "fail")}}</h3>
-                        <p>历史失败（全部）</p>
+                        <p>{{t .Lang "历史失败（全部）"}}</p>
                     </div>
                 </div>
 
@@ -54,45 +54,45 @@
                     <form method="GET" action="/admin/protocol-logs" style="margin-bottom:16px;">
                         <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;">
                             <select name="protocol" style="padding:6px 10px;">
-                                <option value="">全部协议</option>
+                                <option value="">{{t .Lang "全部协议"}}</option>
                                 <option value="smtp" {{if eq .filter.protocol "smtp"}}selected{{end}}>SMTP</option>
                                 <option value="imap" {{if eq .filter.protocol "imap"}}selected{{end}}>IMAP</option>
                                 <option value="pop3" {{if eq .filter.protocol "pop3"}}selected{{end}}>POP3</option>
                             </select>
                             <select name="success" style="padding:6px 10px;">
-                                <option value="">全部状态</option>
-                                <option value="success" {{if eq .filter.success "success"}}selected{{end}}>成功</option>
-                                <option value="fail" {{if eq .filter.success "fail"}}selected{{end}}>失败</option>
+                                <option value="">{{t .Lang "全部状态"}}</option>
+                                <option value="success" {{if eq .filter.success "success"}}selected{{end}}>{{t .Lang "成功"}}</option>
+                                <option value="fail" {{if eq .filter.success "fail"}}selected{{end}}>{{t .Lang "失败"}}</option>
                             </select>
-                            <input type="text" name="ip" placeholder="来源 IP（模糊）" value="{{.filter.ip}}" style="padding:6px 10px;width:160px;">
-                            <input type="text" name="username" placeholder="用户名（模糊）" value="{{.filter.username}}" style="padding:6px 10px;width:160px;">
+                            <input type="text" name="ip" placeholder="{{t .Lang "来源 IP（模糊）"}}" value="{{.filter.ip}}" style="padding:6px 10px;width:160px;">
+                            <input type="text" name="username" placeholder="{{t .Lang "用户名（模糊）"}}" value="{{.filter.username}}" style="padding:6px 10px;width:160px;">
                             <input type="date" name="from" value="{{.filter.from}}" style="padding:6px 10px;">
-                            <span>至</span>
+                            <span>{{t .Lang "至"}}</span>
                             <input type="date" name="to" value="{{.filter.to}}" style="padding:6px 10px;">
-                            <button type="submit" class="btn btn-sm btn-primary">筛选</button>
-                            <a href="/admin/protocol-logs" class="btn btn-sm">重置</a>
+                            <button type="submit" class="btn btn-sm btn-primary">{{t .Lang "筛选"}}</button>
+                            <a href="/admin/protocol-logs" class="btn btn-sm">{{t .Lang "重置"}}</a>
                         </div>
                     </form>
 
                     <table>
                         <thead>
                             <tr>
-                                <th>时间</th>
-                                <th>协议</th>
-                                <th>端口</th>
-                                <th>来源 IP</th>
-                                <th>用户名</th>
-                                <th>状态</th>
-                                <th>失败原因</th>
-                                <th>操作摘要</th>
-                                <th>消息数</th>
-                                <th>时长</th>
+                                <th>{{t .Lang "时间"}}</th>
+                                <th>{{t .Lang "协议"}}</th>
+                                <th>{{t .Lang "端口"}}</th>
+                                <th>{{t .Lang "来源 IP"}}</th>
+                                <th>{{t .Lang "用户名"}}</th>
+                                <th>{{t .Lang "状态"}}</th>
+                                <th>{{t .Lang "失败原因"}}</th>
+                                <th>{{t .Lang "操作摘要"}}</th>
+                                <th>{{t .Lang "消息数"}}</th>
+                                <th>{{t .Lang "时长"}}</th>
                             </tr>
                         </thead>
                         <tbody>
                             {{range .logs}}
                             <tr>
-                                <td style="white-space:nowrap;">{{time12 .CreatedAt}}</td>
+                                <td style="white-space:nowrap;">{{time12 $.Lang .CreatedAt}}</td>
                                 <td>
                                     {{if eq .Protocol "smtp"}}<span class="badge" style="background:#3498db;color:#fff;">SMTP</span>
                                     {{else if eq .Protocol "imap"}}<span class="badge" style="background:#9b59b6;color:#fff;">IMAP</span>
@@ -102,8 +102,8 @@
                                 <td>{{.ClientIP}}</td>
                                 <td>{{if .Username}}{{.Username}}{{else}}—{{end}}</td>
                                 <td>
-                                    {{if .Success}}<span class="badge" style="background:#27ae60;color:#fff;">成功</span>
-                                    {{else}}<span class="badge badge-unread">失败</span>{{end}}
+                                    {{if .Success}}<span class="badge" style="background:#27ae60;color:#fff;">{{t $.Lang "成功"}}</span>
+                                    {{else}}<span class="badge badge-unread">{{t $.Lang "失败"}}</span>{{end}}
                                 </td>
                                 <td style="max-width:200px;">{{if .FailReason}}{{.FailReason}}{{else}}—{{end}}</td>
                                 <td style="max-width:320px;word-break:break-all;font-size:13px;color:#555;">{{.Detail}}</td>
@@ -111,16 +111,16 @@
                                 <td>{{if .DurationMs}}{{div .DurationMs 1000}}s{{else}}—{{end}}</td>
                             </tr>
                             {{else}}
-                            <tr><td colspan="10" style="text-align:center;color:#7f8c8d;">暂无记录</td></tr>
+                            <tr><td colspan="10" style="text-align:center;color:#7f8c8d;">{{t $.Lang "暂无记录"}}</td></tr>
                             {{end}}
                         </tbody>
                     </table>
 
                     {{if gt .totalPages 1}}
                     <div class="pagination">
-                        {{if gt .page 1}}<a href="/admin/protocol-logs?page={{sub .page 1}}&protocol={{.filter.protocol}}&success={{.filter.success}}&ip={{.filter.ip}}&username={{.filter.username}}&from={{.filter.from}}&to={{.filter.to}}">上一页</a>{{end}}
-                        <span class="current">第 {{.page}} / {{.totalPages}} 页（共 {{.total}} 条）</span>
-                        {{if lt .page .totalPages}}<a href="/admin/protocol-logs?page={{add .page 1}}&protocol={{.filter.protocol}}&success={{.filter.success}}&ip={{.filter.ip}}&username={{.filter.username}}&from={{.filter.from}}&to={{.filter.to}}">下一页</a>{{end}}
+                        {{if gt .page 1}}<a href="/admin/protocol-logs?page={{sub .page 1}}&protocol={{.filter.protocol}}&success={{.filter.success}}&ip={{.filter.ip}}&username={{.filter.username}}&from={{.filter.from}}&to={{.filter.to}}">{{t $.Lang "上一页"}}</a>{{end}}
+                        <span class="current">{{tf $.Lang "第 %d / %d 页（共 %d 条）" .page .totalPages .total}}</span>
+                        {{if lt .page .totalPages}}<a href="/admin/protocol-logs?page={{add .page 1}}&protocol={{.filter.protocol}}&success={{.filter.success}}&ip={{.filter.ip}}&username={{.filter.username}}&from={{.filter.from}}&to={{.filter.to}}">{{t $.Lang "下一页"}}</a>{{end}}
                     </div>
                     {{end}}
                 </div>

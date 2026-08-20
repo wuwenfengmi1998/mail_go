@@ -30,6 +30,8 @@ type UserStore interface {
 	ListAll(page, size int) ([]db.User, int64, error)
 	UpdateUsedBytes(id uint, delta int64) error
 	UpdatePassword(userID uint, hashedPassword string) error
+	// UpdateLanguage 更新用户界面语言偏好（auto | en | zh | ja）。
+	UpdateLanguage(userID uint, lang string) error
 	// TryReserveQuota 原子预扣 delta 字节：仅在不超过配额时生效并返回 true，
 	// 否则不做任何修改返回 false。防止并发提交绕过配额检查（TOCTOU）。
 	TryReserveQuota(userID uint, delta int64) (bool, error)
@@ -204,9 +206,20 @@ func (s *userStoreGorm) TryReserveQuota(userID uint, delta int64) (bool, error) 
 func (s *userStoreGorm) UpdatePassword(userID uint, hashedPassword string) error {
 	return s.db.Model(&db.User{}).Where("id = ?", userID).
 		Updates(map[string]interface{}{
-			"password_hash":         hashedPassword,
+			"password_hash":        hashedPassword,
 			"must_change_password": false,
 		}).Error
+}
+
+// UpdateLanguage 更新用户界面语言偏好。非法值（非 auto/en/zh/ja）回退 auto。
+func (s *userStoreGorm) UpdateLanguage(userID uint, lang string) error {
+	switch lang {
+	case "auto", "en", "zh", "ja":
+	default:
+		lang = "auto"
+	}
+	return s.db.Model(&db.User{}).Where("id = ?", userID).
+		Update("language", lang).Error
 }
 
 // ListAll retrieves a paginated list of all users across all domains.

@@ -3,6 +3,7 @@ package middleware
 import (
 	"time"
 
+	"mail_go/internal/i18n"
 	"mail_go/internal/store"
 
 	"github.com/gin-contrib/sessions"
@@ -99,6 +100,10 @@ func AuthMiddleware(stores *store.Stores) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+
+		// 解析界面语言：用户偏好 auto 时按浏览器 Accept-Language 选择，
+		// 最终兜底英语。模板数据与错误提示统一使用该值。
+		c.Set("lang", i18n.Resolve(user.Language, c.GetHeader("Accept-Language")))
 
 		c.Set("currentUser", user)
 		c.Set("userID", id)

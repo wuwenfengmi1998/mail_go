@@ -1,55 +1,55 @@
 {{define "login"}}
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{htmlLang .Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>登录 - MailGo 邮箱</title>
+    <title>{{t .Lang "登录"}} - MailGo {{t .Lang "邮箱"}}</title>
     {{template "styles" .}}
 </head>
 <body class="login-page">
     <div class="login-card">
         <div class="login-logo">
             <span class="logo-icon" style="width:44px;height:44px;font-size:22px;border-radius:12px;">✉</span>
-            <span style="font-size:26px;font-weight:700;color:var(--primary);">MailGo<em style="font-style:normal;font-weight:400;font-size:15px;color:var(--text-2);margin-left:4px;">邮箱</em></span>
+            <span style="font-size:26px;font-weight:700;color:var(--primary);">MailGo<em style="font-style:normal;font-weight:400;font-size:15px;color:var(--text-2);margin-left:4px;">{{t .Lang "邮箱"}}</em></span>
         </div>
-        <div class="login-sub">登录您的邮箱账户</div>
+        <div class="login-sub">{{t .Lang "登录您的邮箱账户"}}</div>
 
         {{if .error}}<div class="alert alert-error">{{.error}}</div>{{end}}
 
         <form method="POST" action="/login">
             <div class="form-group">
-                <label>邮箱地址</label>
+                <label>{{t .Lang "邮箱地址"}}</label>
                 <input type="email" name="email" required autofocus placeholder="user@example.com" style="padding:11px 14px;border-radius:8px;">
             </div>
             <div class="form-group">
-                <label>密码</label>
-                <input type="password" name="password" required placeholder="请输入密码" style="padding:11px 14px;border-radius:8px;">
+                <label>{{t .Lang "密码"}}</label>
+                <input type="password" name="password" required placeholder="{{t .Lang "请输入密码"}}" style="padding:11px 14px;border-radius:8px;">
             </div>
-            <button type="submit" class="btn btn-primary" style="width:100%;padding:11px 16px;font-size:15px;border-radius:8px;">登 录</button>
+            <button type="submit" class="btn btn-primary" style="width:100%;padding:11px 16px;font-size:15px;border-radius:8px;">{{t .Lang "登 录"}}</button>
         </form>
 
         {{if or .oauth2Enabled .ldapEnabled}}
-        <div class="divider">或</div>
+        <div class="divider">{{t .Lang "或"}}</div>
         {{end}}
 
         {{if .ldapEnabled}}
         <form method="POST" action="/login/ldap" style="margin-bottom:10px;">
             <div class="form-group">
-                <label>LDAP 用户名</label>
-                <input type="text" name="username" placeholder="LDAP 用户名">
+                <label>{{t .Lang "LDAP 用户名"}}</label>
+                <input type="text" name="username" placeholder="{{t .Lang "LDAP 用户名"}}">
             </div>
             <div class="form-group">
-                <label>LDAP 密码</label>
-                <input type="password" name="password" placeholder="LDAP 密码">
+                <label>{{t .Lang "LDAP 密码"}}</label>
+                <input type="password" name="password" placeholder="{{t .Lang "LDAP 密码"}}">
             </div>
-            <button type="submit" class="btn" style="width:100%;background:#7b5cd6;color:#fff;">LDAP 登录</button>
+            <button type="submit" class="btn" style="width:100%;background:#7b5cd6;color:#fff;">{{t .Lang "LDAP 登录"}}</button>
         </form>
         {{end}}
 
         {{if .oauth2Enabled}}
         <a href="/auth/oauth2" class="btn btn-primary" style="width:100%;text-align:center;display:block;margin-top:4px;">
-            {{if eq .oauth2Provider "google"}}Google{{else if eq .oauth2Provider "github"}}GitHub{{else}}OAuth2{{end}} 登录
+            {{if eq .oauth2Provider "google"}}Google{{else if eq .oauth2Provider "github"}}GitHub{{else}}OAuth2{{end}} {{t .Lang "登录"}}
         </a>
         {{end}}
     </div>

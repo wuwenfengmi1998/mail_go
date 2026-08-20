@@ -6,20 +6,23 @@ import (
 
 // User represents a mail user in the system.
 type User struct {
-	ID           uint      `gorm:"primaryKey" json:"id"`
-	Username     string    `gorm:"size:64;not null" json:"username"`
-	PasswordHash string    `gorm:"size:255;not null" json:"-"`
-	DomainID     uint      `gorm:"index" json:"domain_id"`
-	Domain       Domain    `gorm:"foreignKey:DomainID" json:"domain"`
-	QuotaBytes   int64     `gorm:"default:5368709120" json:"quota_bytes"`
-	UsedBytes    int64     `gorm:"default:0" json:"used_bytes"`
-	IsActive     bool      `gorm:"default:true" json:"is_active"`
-	IsAdmin      bool      `gorm:"default:false" json:"is_admin"`
+	ID           uint   `gorm:"primaryKey" json:"id"`
+	Username     string `gorm:"size:64;not null" json:"username"`
+	PasswordHash string `gorm:"size:255;not null" json:"-"`
+	DomainID     uint   `gorm:"index" json:"domain_id"`
+	Domain       Domain `gorm:"foreignKey:DomainID" json:"domain"`
+	QuotaBytes   int64  `gorm:"default:5368709120" json:"quota_bytes"`
+	UsedBytes    int64  `gorm:"default:0" json:"used_bytes"`
+	IsActive     bool   `gorm:"default:true" json:"is_active"`
+	IsAdmin      bool   `gorm:"default:false" json:"is_admin"`
 	// MustChangePassword 为 true 时该用户（通常是初始管理员或被重置密码的
 	// 用户）在首次登录后必须修改密码。
-	MustChangePassword bool      `gorm:"default:false" json:"-"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	MustChangePassword bool `gorm:"default:false" json:"-"`
+	// Language 界面语言偏好：auto（跟随浏览器 Accept-Language）| en | zh | ja。
+	// 默认 auto，浏览器语言无法识别时回退英语。
+	Language  string    `gorm:"size:8;default:auto" json:"language"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // TableName specifies the table name for User.
@@ -51,20 +54,20 @@ func (Domain) TableName() string {
 
 // Message represents an email message in the system.
 type Message struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	UserID    uint      `gorm:"index;not null" json:"user_id"`
-	User      User      `gorm:"foreignKey:UserID" json:"user"`
-	MessageID string    `gorm:"size:255;index" json:"message_id"`
-	Folder    string    `gorm:"size:64;default:INBOX;index" json:"folder"`
-	FromAddr  string    `gorm:"size:512;not null" json:"from_addr"`
-	ToAddr    string    `gorm:"size:2048;not null" json:"to_addr"`
-	CcAddr    string    `gorm:"size:2048" json:"cc_addr"`
-	Subject   string    `gorm:"size:1024" json:"subject"`
-	TextBody  string    `gorm:"type:mediumtext" json:"text_body"`
-	HtmlBody  string    `gorm:"type:mediumtext" json:"html_body"`
-	RawData   string    `gorm:"type:mediumtext" json:"raw_data"`
-	IsRead    bool      `gorm:"default:false" json:"is_read"`
-	IsFlagged bool      `gorm:"default:false" json:"is_flagged"`
+	ID        uint   `gorm:"primaryKey" json:"id"`
+	UserID    uint   `gorm:"index;not null" json:"user_id"`
+	User      User   `gorm:"foreignKey:UserID" json:"user"`
+	MessageID string `gorm:"size:255;index" json:"message_id"`
+	Folder    string `gorm:"size:64;default:INBOX;index" json:"folder"`
+	FromAddr  string `gorm:"size:512;not null" json:"from_addr"`
+	ToAddr    string `gorm:"size:2048;not null" json:"to_addr"`
+	CcAddr    string `gorm:"size:2048" json:"cc_addr"`
+	Subject   string `gorm:"size:1024" json:"subject"`
+	TextBody  string `gorm:"type:mediumtext" json:"text_body"`
+	HtmlBody  string `gorm:"type:mediumtext" json:"html_body"`
+	RawData   string `gorm:"type:mediumtext" json:"raw_data"`
+	IsRead    bool   `gorm:"default:false" json:"is_read"`
+	IsFlagged bool   `gorm:"default:false" json:"is_flagged"`
 	// IsDeleted 持久化 IMAP \Deleted 标记（STORE +FLAGS \Deleted 写入，
 	// EXPUNGE/UID EXPUNGE 时按此删除）。此前该标记只存于内存会话
 	// （imapMailbox.deleted map），重选文件夹/重连即丢失，导致客户端
@@ -118,9 +121,9 @@ type BanEntry struct {
 	ID uint `gorm:"primaryKey" json:"id"`
 	// IPAddress 唯一索引：每 IP 恰好一条记录（观察计数与封禁状态共用），
 	// 防止并发写入产生重复行导致计数与档位读写错位。
-	IPAddress string    `gorm:"size:45;uniqueIndex;not null" json:"ip_address"`
-	Reason    string    `gorm:"size:255" json:"reason"`
-	FailCount int       `gorm:"default:0" json:"fail_count"`
+	IPAddress string `gorm:"size:45;uniqueIndex;not null" json:"ip_address"`
+	Reason    string `gorm:"size:255" json:"reason"`
+	FailCount int    `gorm:"default:0" json:"fail_count"`
 	// BanCount 是该 IP 累计达到失败阈值的次数（含未封禁的前几次）。
 	// 阶段封禁依据：前 3 次只计数不封禁，第 4 次起按档位递增时长。
 	// 成功登录或管理员解封会删除记录，次数随之清零。

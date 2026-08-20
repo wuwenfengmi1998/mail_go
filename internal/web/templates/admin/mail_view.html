@@ -1,10 +1,10 @@
 {{define "admin_mail_view"}}
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{htmlLang .Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>查看邮件 - MailGo 管理后台</title>
+    <title>{{t .Lang "查看邮件"}} - MailGo {{t .Lang "管理后台"}}</title>
     {{template "styles" .}}
     <style>
         .mail-body-iframe {
@@ -21,29 +21,29 @@
     <div class="container">
         <div class="clearfix">
             <div class="sidebar">
-                <a href="/inbox">返回邮箱</a>
-                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>控制面板</a>
-                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>域名管理</a>
-                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>用户管理</a>
-                <a href="/admin/mails" class="active">所有邮件</a>
-                <a href="/admin/outbound" {{if eq .activeFolder "outbound"}}class="active"{{end}}>外发队列</a>
-                                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>协议日志</a>
-                <a href="/admin/connections" {{if eq .activeFolder "connections"}}class="active"{{end}}>当前连接</a>
-<a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>IP黑名单</a>
+                <a href="/inbox">{{t .Lang "返回邮箱"}}</a>
+                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>{{t .Lang "控制面板"}}</a>
+                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>{{t .Lang "域名管理"}}</a>
+                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>{{t .Lang "用户管理"}}</a>
+                <a href="/admin/mails" class="active">{{t .Lang "所有邮件"}}</a>
+                <a href="/admin/outbound" {{if eq .activeFolder "outbound"}}class="active"{{end}}>{{t .Lang "外发队列"}}</a>
+                                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>{{t .Lang "协议日志"}}</a>
+                <a href="/admin/connections" {{if eq .activeFolder "connections"}}class="active"{{end}}>{{t .Lang "当前连接"}}</a>
+<a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>{{t .Lang "IP黑名单"}}</a>
             </div>
             <div class="content">
                 <div class="card">
                     <div style="margin-bottom:16px;">
-                        <a href="/admin/mails" class="btn" style="background:#bdc3c7;color:#fff;">返回邮件列表</a>
+                        <a href="/admin/mails" class="btn" style="background:#bdc3c7;color:#fff;">{{t .Lang "返回邮件列表"}}</a>
                     </div>
-                    <h2>{{if .message.Subject}}{{.message.Subject}}{{else}}(无主题){{end}}</h2>
+                    <h2>{{if .message.Subject}}{{.message.Subject}}{{else}}{{t .Lang "(无主题)"}}{{end}}</h2>
                     <div class="mail-meta" style="margin-top:12px;">
-                        <p><strong>发件人:</strong> {{decodeHeader .message.FromAddr}}</p>
-                        <p><strong>收件人:</strong> {{.message.ToAddr}}</p>
-                        {{if .message.CcAddr}}<p><strong>抄送:</strong> {{.message.CcAddr}}</p>{{end}}
-                        <p><strong>所属用户:</strong> {{if .message.User.ID}}{{.message.User.Username}}{{else}}—{{end}}</p>
-                        <p><strong>文件夹:</strong> {{.message.Folder}}</p>
-                        <p><strong>时间:</strong> {{time12 .message.Date}}</p>
+                        <p><strong>{{t .Lang "发件人:"}}</strong> {{decodeHeader .message.FromAddr}}</p>
+                        <p><strong>{{t .Lang "收件人:"}}</strong> {{.message.ToAddr}}</p>
+                        {{if .message.CcAddr}}<p><strong>{{t .Lang "抄送:"}}</strong> {{.message.CcAddr}}</p>{{end}}
+                        <p><strong>{{t .Lang "所属用户:"}}</strong> {{if .message.User.ID}}{{.message.User.Username}}{{else}}—{{end}}</p>
+                        <p><strong>{{t .Lang "文件夹:"}}</strong> {{.message.Folder}}</p>
+                        <p><strong>{{t .Lang "时间:"}}</strong> {{time12 .Lang .message.Date}}</p>
                     </div>
                     <div class="mail-body">
                         {{if .message.HtmlBody}}
@@ -54,7 +54,7 @@
                     </div>
                     {{if .attachments}}
                     <div class="attachment-list">
-                        <h4 style="margin-bottom:8px;">附件</h4>
+                        <h4 style="margin-bottom:8px;">{{t .Lang "附件列表"}}</h4>
                         {{range .attachments}}
                         <div class="attachment-item">
                             📎 <a href="/admin/attachment/{{.ID}}">{{.FileName}}</a>

@@ -1,10 +1,10 @@
 {{define "admin_outbound"}}
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{htmlLang .Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>外发队列 - MailGo</title>
+    <title>{{t .Lang "外发队列"}} - MailGo</title>
     {{template "styles" .}}
 </head>
 <body>
@@ -12,60 +12,60 @@
     <div class="container">
         <div class="clearfix">
             <div class="sidebar">
-                <a href="/inbox">返回邮箱</a>
-                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>控制面板</a>
-                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>域名管理</a>
-                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>用户管理</a>
-                <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>所有邮件</a>
-                <a href="/admin/outbound" {{if eq .activeFolder "outbound"}}class="active"{{end}}>外发队列</a>
-                                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>协议日志</a>
-                <a href="/admin/connections" {{if eq .activeFolder "connections"}}class="active"{{end}}>当前连接</a>
-<a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>IP黑名单</a>
+                <a href="/inbox">{{t .Lang "返回邮箱"}}</a>
+                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>{{t .Lang "控制面板"}}</a>
+                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>{{t .Lang "域名管理"}}</a>
+                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>{{t .Lang "用户管理"}}</a>
+                <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>{{t .Lang "所有邮件"}}</a>
+                <a href="/admin/outbound" {{if eq .activeFolder "outbound"}}class="active"{{end}}>{{t .Lang "外发队列"}}</a>
+                                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>{{t .Lang "协议日志"}}</a>
+                <a href="/admin/connections" {{if eq .activeFolder "connections"}}class="active"{{end}}>{{t .Lang "当前连接"}}</a>
+<a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>{{t .Lang "IP黑名单"}}</a>
             </div>
             <div class="content">
-                <h2 style="margin-bottom:24px;">外发队列</h2>
+                <h2 style="margin-bottom:24px;">{{t .Lang "外发队列"}}</h2>
 
                 <div style="margin-bottom:24px;">
                     <div class="stat-card">
                         <h3>{{index .statCounts "pending"}}</h3>
-                        <p>待发送</p>
+                        <p>{{t .Lang "待发送"}}</p>
                     </div>
                     <div class="stat-card">
                         <h3>{{index .statCounts "deferred"}}</h3>
-                        <p>等待重试</p>
+                        <p>{{t .Lang "等待重试"}}</p>
                     </div>
                     <div class="stat-card">
                         <h3>{{index .statCounts "sent"}}</h3>
-                        <p>已送达</p>
+                        <p>{{t .Lang "已送达"}}</p>
                     </div>
                     <div class="stat-card">
                         <h3>{{index .statCounts "failed"}}</h3>
-                        <p>失败</p>
+                        <p>{{t .Lang "失败"}}</p>
                     </div>
                 </div>
 
                 <div class="card">
                     <div style="margin-bottom:12px;">
-                        <a href="/admin/outbound" class="btn btn-sm {{if eq .status ""}}btn-primary{{end}}" style="background:{{if eq .status ""}}#3498db{{else}}#ecf0f1{{end}};color:{{if eq .status ""}}#fff{{else}}#333{{end}};">全部</a>
-                        <a href="/admin/outbound?status=pending" class="btn btn-sm">待发送</a>
-                        <a href="/admin/outbound?status=deferred" class="btn btn-sm">等待重试</a>
-                        <a href="/admin/outbound?status=sent" class="btn btn-sm">已送达</a>
-                        <a href="/admin/outbound?status=failed" class="btn btn-sm">失败</a>
-                        <a href="/admin/outbound?status=canceled" class="btn btn-sm">已取消</a>
+                        <a href="/admin/outbound" class="btn btn-sm {{if eq .status ""}}btn-primary{{end}}" style="background:{{if eq .status ""}}#3498db{{else}}#ecf0f1{{end}};color:{{if eq .status ""}}#fff{{else}}#333{{end}};">{{t .Lang "全部"}}</a>
+                        <a href="/admin/outbound?status=pending" class="btn btn-sm">{{t .Lang "待发送"}}</a>
+                        <a href="/admin/outbound?status=deferred" class="btn btn-sm">{{t .Lang "等待重试"}}</a>
+                        <a href="/admin/outbound?status=sent" class="btn btn-sm">{{t .Lang "已送达"}}</a>
+                        <a href="/admin/outbound?status=failed" class="btn btn-sm">{{t .Lang "失败"}}</a>
+                        <a href="/admin/outbound?status=canceled" class="btn btn-sm">{{t .Lang "已取消"}}</a>
                     </div>
 
                     <table>
                         <thead>
                             <tr>
                                 <th>ID</th>
-                                <th>发件人</th>
-                                <th>收件人</th>
-                                <th>状态</th>
-                                <th>尝试次数</th>
-                                <th>下次重试</th>
-                                <th>最后响应 / 错误</th>
-                                <th>创建时间</th>
-                                <th>操作</th>
+                                <th>{{t .Lang "发件人"}}</th>
+                                <th>{{t .Lang "收件人"}}</th>
+                                <th>{{t .Lang "状态"}}</th>
+                                <th>{{t .Lang "尝试次数"}}</th>
+                                <th>{{t .Lang "下次重试"}}</th>
+                                <th>{{t .Lang "最后响应 / 错误"}}</th>
+                                <th>{{t .Lang "创建时间"}}</th>
+                                <th>{{t .Lang "操作"}}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -75,40 +75,40 @@
                                 <td>{{.FromAddr}}</td>
                                 <td>{{.ToAddr}}</td>
                                 <td>
-                                    {{if eq .Status "pending"}}<span class="badge" style="background:#f39c12;color:#fff;">{{call $.statusText .Status}}</span>
-                                    {{else if eq .Status "deferred"}}<span class="badge" style="background:#e67e22;color:#fff;">{{call $.statusText .Status}}</span>
-                                    {{else if eq .Status "sent"}}<span class="badge" style="background:#27ae60;color:#fff;">{{call $.statusText .Status}}</span>
-                                    {{else if eq .Status "failed"}}<span class="badge badge-unread">{{call $.statusText .Status}}</span>
-                                    {{else}}<span class="badge" style="background:#95a5a6;color:#fff;">{{call $.statusText .Status}}</span>{{end}}
+                                    {{if eq .Status "pending"}}<span class="badge" style="background:#f39c12;color:#fff;">{{t $.Lang (call $.statusText .Status)}}</span>
+                                    {{else if eq .Status "deferred"}}<span class="badge" style="background:#e67e22;color:#fff;">{{t $.Lang (call $.statusText .Status)}}</span>
+                                    {{else if eq .Status "sent"}}<span class="badge" style="background:#27ae60;color:#fff;">{{t $.Lang (call $.statusText .Status)}}</span>
+                                    {{else if eq .Status "failed"}}<span class="badge badge-unread">{{t $.Lang (call $.statusText .Status)}}</span>
+                                    {{else}}<span class="badge" style="background:#95a5a6;color:#fff;">{{t $.Lang (call $.statusText .Status)}}</span>{{end}}
                                 </td>
                                 <td>{{.Attempts}}</td>
-                                <td>{{if or (eq .Status "pending") (eq .Status "deferred")}}{{time12m .NextAttemptAt}}{{else}}—{{end}}</td>
+                                <td>{{if or (eq .Status "pending") (eq .Status "deferred")}}{{time12m $.Lang .NextAttemptAt}}{{else}}—{{end}}</td>
                                 <td style="max-width:280px;word-break:break-all;">{{if .LastResponse}}{{.LastResponse}}{{else}}{{.LastError}}{{end}}</td>
-                                <td>{{time12m .CreatedAt}}</td>
+                                <td>{{time12m $.Lang .CreatedAt}}</td>
                                 <td>
                                     {{if or (eq .Status "failed") (eq .Status "deferred") (eq .Status "canceled") (eq .Status "pending")}}
                                     <form method="POST" action="/admin/outbound/{{.ID}}/retry" style="display:inline;">
-                                        <button type="submit" class="btn btn-sm btn-primary">重试</button>
+                                        <button type="submit" class="btn btn-sm btn-primary">{{t $.Lang "重试"}}</button>
                                     </form>
                                     {{end}}
                                     {{if or (eq .Status "pending") (eq .Status "deferred")}}
-                                    <form method="POST" action="/admin/outbound/{{.ID}}/cancel" style="display:inline;" onsubmit="return confirm('确认取消该投递任务？');">
-                                        <button type="submit" class="btn btn-sm btn-danger">取消</button>
+                                    <form method="POST" action="/admin/outbound/{{.ID}}/cancel" style="display:inline;" onsubmit="return confirm('{{t $.Lang "确认取消该投递任务？"}}');">
+                                        <button type="submit" class="btn btn-sm btn-danger">{{t $.Lang "取消"}}</button>
                                     </form>
                                     {{end}}
                                 </td>
                             </tr>
                             {{else}}
-                            <tr><td colspan="9" style="text-align:center;color:#7f8c8d;">队列为空</td></tr>
+                            <tr><td colspan="9" style="text-align:center;color:#7f8c8d;">{{t $.Lang "队列为空"}}</td></tr>
                             {{end}}
                         </tbody>
                     </table>
 
                     {{if gt .totalPages 1}}
                     <div class="pagination">
-                        {{if gt .page 1}}<a href="/admin/outbound?page={{sub .page 1}}&status={{.status}}">上一页</a>{{end}}
-                        <span class="current">第 {{.page}} / {{.totalPages}} 页</span>
-                        {{if lt .page .totalPages}}<a href="/admin/outbound?page={{add .page 1}}&status={{.status}}">下一页</a>{{end}}
+                        {{if gt .page 1}}<a href="/admin/outbound?page={{sub .page 1}}&status={{.status}}">{{t $.Lang "上一页"}}</a>{{end}}
+                        <span class="current">{{tf $.Lang "第 %d / %d 页" .page .totalPages}}</span>
+                        {{if lt .page .totalPages}}<a href="/admin/outbound?page={{add .page 1}}&status={{.status}}">{{t $.Lang "下一页"}}</a>{{end}}
                     </div>
                     {{end}}
                 </div>
