@@ -159,27 +159,58 @@ func TestSeqStoreServerIssued(t *testing.T) {
 	assertReadState(t, stores, ids[2], true)
 }
 
-// TestSeqStoreClientSelfNumbered 复现风险场景：客户端不信任服务器序号，
-// 按自己的视图（日期倒序，最新在前）自行编号后发 seq 式 STORE。
-// 服务器规范排序必须与常见客户端视图一致（date DESC, id DESC），
-// 否则会把另一封邮件标为已读、目标邮件永远未读。
-func TestSeqStoreClientSelfNumbered(t *testing.T) {
+// TestSeqOrderArrival 验证序号按到达顺序（id ASC，最早 = seq 1）分配：
+// 与主流服务器行为一致——新邮件永远追加到末尾（seq = 新 EXISTS 数），
+// 既不位移既有邮件序号，也能被 seq 增量同步（seq 4）正确获取；
+// INTERNALDATE 返回到达时间（CreatedAt）而非 Date 头。
+func TestSeqOrderArrival(t *testing.T) {
 	stores, addr := startIntegrationServer(t)
-	ids := seedMailbox(t, stores, 1, 3) // 3 封，日期递增，最新的是 ids[2]
+	ids := seedMailbox(t, stores, 1, 3)
 
 	c := loginAndSelect(t, addr)
 
-	// 客户端按日期倒序视图：最新一封 = seq 1
-	cmd := c.Store(imap.SeqSetNum(1), &imap.StoreFlags{
-		Op:    imap.StoreFlagsAdd,
-		Flags: []imap.Flag{imap.FlagSeen},
-	}, nil)
-	if _, err := cmd.Collect(); err != nil {
-		t.Fatalf("store: %v", err)
+	msgs, err := c.Fetch(imap.SeqSetNum(1, 2, 3), &imap.FetchOptions{UID: true}).Collect()
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	seqOf := map[imap.UID]uint32{}
+	for _, m := range msgs {
+		seqOf[m.UID] = m.SeqNum
+	}
+	if seqOf[imap.UID(ids[0])] != 1 || seqOf[imap.UID(ids[1])] != 2 || seqOf[imap.UID(ids[2])] != 3 {
+		t.Fatalf("seq mapping = %v, want ids[0]=1 ids[1]=2 ids[2]=3", seqOf)
 	}
 
-	// 客户端意图是标记最新一封（ids[2]）为已读
-	assertReadState(t, stores, ids[2], true)
+	// 新邮件到达（Date 头较旧）：仍追加到末尾，不移位既有邮件
+	late := &db.Message{
+		UserID:    1,
+		Folder:    "INBOX",
+		FromAddr:  "x@y",
+		ToAddr:    "alice@example.com",
+		Subject:   "late",
+		Date:      time.Now().Add(-24 * time.Hour),
+		CreatedAt: time.Now(),
+	}
+	if err := stores.Mails.Create(late); err != nil {
+		t.Fatalf("create late message: %v", err)
+	}
+
+	msgs, err = c.Fetch(imap.SeqSetNum(4), &imap.FetchOptions{UID: true, InternalDate: true}).Collect()
+	if err != nil {
+		t.Fatalf("fetch seq 4: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].UID != imap.UID(late.ID) {
+		t.Fatalf("seq 4 = %v, want 新邮件 uid=%d", msgs, late.ID)
+	}
+
+	// INTERNALDATE = 到达时间（CreatedAt），而不是 Date 头（协议格式仅到秒）
+	stored, err := stores.Mails.GetByID(late.ID)
+	if err != nil {
+		t.Fatalf("get late msg: %v", err)
+	}
+	if !msgs[0].InternalDate.Equal(stored.CreatedAt.Truncate(time.Second)) {
+		t.Fatalf("internaldate = %v, want CreatedAt %v", msgs[0].InternalDate, stored.CreatedAt)
+	}
 }
 
 // TestFetchBodyMalformedMIME 回归：消息包含无法解析的 MIME（base64 编码的

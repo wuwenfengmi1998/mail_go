@@ -497,7 +497,13 @@ func (s *imapSession) Fetch(w *imapserver.FetchWriter, numSet imap.NumSet, optio
 			fw.WriteRFC822Size(int64(len(raw)))
 		}
 		if options.InternalDate {
-			fw.WriteInternalDate(msg.Date)
+			// INTERNALDATE 是服务器接收时间（RFC 3501 §2.3.4），不是 Date
+			// 头；使用 CreatedAt（到达时间），旧数据为零时降级为 Date。
+			arrival := msg.CreatedAt
+			if arrival.IsZero() {
+				arrival = msg.Date
+			}
+			fw.WriteInternalDate(arrival)
 		}
 		if options.Envelope {
 			var env *imap.Envelope

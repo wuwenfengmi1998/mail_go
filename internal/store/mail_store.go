@@ -36,7 +36,7 @@ type MailStore interface {
 	// SetDeletedStates 批量设置多封邮件的 \Deleted 标记（单条 UPDATE ... IN）。
 	SetDeletedStates(ids []uint, deleted bool) error
 	// ListDeletedByUserAndFolder 列出某文件夹中所有已标记 \Deleted 的邮件
-	// （按 date DESC, id DESC 排序，与全量列表一致，序号映射全链路相同）。
+	// （按 id ASC 排序，与全量列表一致，序号映射全链路相同）。
 	ListDeletedByUserAndFolder(userID uint, folder string) ([]db.Message, error)
 	// DeleteMany 批量硬删除多封邮件（单条 DELETE ... IN）。
 	DeleteMany(ids []uint) error
@@ -93,7 +93,7 @@ func (s *mailStoreGorm) ListByUserAndFolder(userID uint, folder string, page, si
 	}
 
 	offset := (page - 1) * size
-	if err := query.Order("date DESC").Offset(offset).Limit(size).Find(&messages).Error; err != nil {
+	if err := query.Order("date DESC, id DESC").Offset(offset).Limit(size).Find(&messages).Error; err != nil {
 		return nil, 0, err
 	}
 	return messages, total, nil
@@ -145,11 +145,12 @@ func (s *mailStoreGorm) SetDeletedStates(ids []uint, deleted bool) error {
 	return s.db.Model(&db.Message{}).Where("id IN ?", ids).Update("is_deleted", deleted).Error
 }
 
-// ListDeletedByUserAndFolder 列出某文件夹中所有已标记 \Deleted 的邮件。
+// ListDeletedByUserAndFolder 列出某文件夹中所有已标记 \Deleted 的邮件
+// （按 id ASC 排序，与全量列表一致，序号映射全链路相同）。
 func (s *mailStoreGorm) ListDeletedByUserAndFolder(userID uint, folder string) ([]db.Message, error) {
 	var messages []db.Message
 	if err := s.db.Where("user_id = ? AND folder = ? AND is_deleted = ?", userID, folder, true).
-		Order("date DESC, id DESC").Find(&messages).Error; err != nil {
+		Order("id ASC").Find(&messages).Error; err != nil {
 		return nil, err
 	}
 	return messages, nil
@@ -180,14 +181,16 @@ func (s *mailStoreGorm) CountUnread(userID uint, folder string) (int64, error) {
 }
 
 // ListAllByUserAndFolder retrieves all messages for a user in a folder without pagination.
-// 按 date DESC, id DESC 排序（最新在前）：与主流邮件客户端（Thunderbird、
-// 手机客户端等）默认视图一致，客户端自行按日期编号的 seq 式 STORE 不会
-// 错位标错邮件。所有 IMAP 序号相关路径（Status/ListMessages/推送/seqOf）
-// 共用本排序，保证序号全链路一致。
+// 按 id ASC（到达顺序，最早在前）排序：新邮件永远获得最大序号（seq =
+// EXISTS 数），与主流服务器（Dovecot/Courier）行为一致，依赖「新邮件 =
+// seq N+1」做增量同步的客户端不会漏收或标错邮件；新邮件到达不会使既有
+// 邮件序号位移（只有 EXPUNGE 才会，属正常行为）。所有 IMAP 序号相关路径
+// （Status/Fetch/Search/Store/Copy/Move/Expunge/推送/seqOf）共用本排序，
+// 保证序号全链路一致。INTERNALDATE 使用 CreatedAt（到达时间），与排序一致。
 func (s *mailStoreGorm) ListAllByUserAndFolder(userID uint, folder string) ([]db.Message, error) {
 	var messages []db.Message
 	if err := s.db.Where("user_id = ? AND folder = ?", userID, folder).
-		Order("date DESC, id DESC").Find(&messages).Error; err != nil {
+		Order("id ASC").Find(&messages).Error; err != nil {
 		return nil, err
 	}
 	return messages, nil
