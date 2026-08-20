@@ -11,6 +11,7 @@ import (
 
 	"mail_go/config"
 	"mail_go/internal/auth"
+	"mail_go/internal/i18n"
 	"mail_go/internal/store"
 
 	"github.com/gin-contrib/sessions"
@@ -37,12 +38,12 @@ func (h *AuthHandler) ShowLogin(c *gin.Context) {
 		c.Redirect(302, "/inbox")
 		return
 	}
-	c.HTML(200, "login", gin.H{
+	c.HTML(200, "login", withLang(c, gin.H{
 		"error":          "",
 		"oauth2Enabled":  h.authCfg.OAuth2Enabled,
 		"ldapEnabled":    h.authCfg.LDAPEnabled,
 		"oauth2Provider": h.authCfg.OAuth2Provider,
-	})
+	}))
 }
 
 // DoLogin processes the login form submission.
@@ -54,7 +55,7 @@ func (h *AuthHandler) DoLogin(c *gin.Context) {
 	// Check if IP is banned
 	banned, entry := h.stores.Bans.IsBanned(ip)
 	if banned {
-		c.HTML(http.StatusForbidden, "banned", gin.H{"entry": entry})
+		c.HTML(http.StatusForbidden, "banned", withLang(c, gin.H{"entry": entry}))
 		return
 	}
 
@@ -62,12 +63,12 @@ func (h *AuthHandler) DoLogin(c *gin.Context) {
 	password := c.PostForm("password")
 
 	if email == "" || password == "" {
-		c.HTML(200, "login", gin.H{
-			"error":          "请输入邮箱和密码",
+		c.HTML(200, "login", withLang(c, gin.H{
+			"error":          i18n.T(langOf(c), "请输入邮箱和密码"),
 			"oauth2Enabled":  h.authCfg.OAuth2Enabled,
 			"ldapEnabled":    h.authCfg.LDAPEnabled,
 			"oauth2Provider": h.authCfg.OAuth2Provider,
-		})
+		}))
 		return
 	}
 
@@ -79,17 +80,17 @@ func (h *AuthHandler) DoLogin(c *gin.Context) {
 		banned, failCount := h.stores.RecordAuthFailure(ip, h.banCfg.MaxFailAttempts, h.banCfg.BanDurationMin, "登录失败次数过多", knownUser)
 		if banned {
 			entry, _ := h.stores.Bans.GetByIP(ip)
-			c.HTML(http.StatusForbidden, "banned", gin.H{"entry": entry})
+			c.HTML(http.StatusForbidden, "banned", withLang(c, gin.H{"entry": entry}))
 			return
 		}
 
 		remaining := h.banCfg.MaxFailAttempts - failCount
-		c.HTML(200, "login", gin.H{
-			"error":          fmt.Sprintf("用户名或密码错误，还剩 %d 次尝试机会", remaining),
+		c.HTML(200, "login", withLang(c, gin.H{
+			"error":          i18n.TF(langOf(c), "用户名或密码错误，还剩 %d 次尝试机会", remaining),
 			"oauth2Enabled":  h.authCfg.OAuth2Enabled,
 			"ldapEnabled":    h.authCfg.LDAPEnabled,
 			"oauth2Provider": h.authCfg.OAuth2Provider,
-		})
+		}))
 		return
 	}
 
@@ -105,12 +106,12 @@ func (h *AuthHandler) DoLogin(c *gin.Context) {
 	session.Set("isAdmin", user.IsAdmin)
 	session.Set("loginAt", time.Now().Unix())
 	if err := session.Save(); err != nil {
-		c.HTML(200, "login", gin.H{
-			"error":          "会话保存失败，请重试",
+		c.HTML(200, "login", withLang(c, gin.H{
+			"error":          i18n.T(langOf(c), "会话保存失败，请重试"),
 			"oauth2Enabled":  h.authCfg.OAuth2Enabled,
 			"ldapEnabled":    h.authCfg.LDAPEnabled,
 			"oauth2Provider": h.authCfg.OAuth2Provider,
-		})
+		}))
 		return
 	}
 
@@ -124,7 +125,7 @@ func (h *AuthHandler) LDAPLogin(c *gin.Context) {
 	// Check if IP is banned
 	banned, entry := h.stores.Bans.IsBanned(ip)
 	if banned {
-		c.HTML(http.StatusForbidden, "banned", gin.H{"entry": entry})
+		c.HTML(http.StatusForbidden, "banned", withLang(c, gin.H{"entry": entry}))
 		return
 	}
 
@@ -132,12 +133,12 @@ func (h *AuthHandler) LDAPLogin(c *gin.Context) {
 	password := c.PostForm("password")
 
 	if username == "" || password == "" {
-		c.HTML(200, "login", gin.H{
-			"error":          "请输入LDAP用户名和密码",
+		c.HTML(200, "login", withLang(c, gin.H{
+			"error":          i18n.T(langOf(c), "请输入LDAP用户名和密码"),
 			"oauth2Enabled":  h.authCfg.OAuth2Enabled,
 			"ldapEnabled":    h.authCfg.LDAPEnabled,
 			"oauth2Provider": h.authCfg.OAuth2Provider,
-		})
+		}))
 		return
 	}
 
@@ -153,39 +154,39 @@ func (h *AuthHandler) LDAPLogin(c *gin.Context) {
 		banned, failCount := h.stores.RecordAuthFailure(ip, h.banCfg.MaxFailAttempts, h.banCfg.BanDurationMin, "LDAP 登录失败次数过多", true)
 		if banned {
 			entry, _ := h.stores.Bans.GetByIP(ip)
-			c.HTML(http.StatusForbidden, "banned", gin.H{"entry": entry})
+			c.HTML(http.StatusForbidden, "banned", withLang(c, gin.H{"entry": entry}))
 			return
 		}
 
 		remaining := h.banCfg.MaxFailAttempts - failCount
-		c.HTML(200, "login", gin.H{
-			"error":          fmt.Sprintf("LDAP 认证失败，还剩 %d 次尝试机会", remaining),
+		c.HTML(200, "login", withLang(c, gin.H{
+			"error":          i18n.TF(langOf(c), "LDAP 认证失败，还剩 %d 次尝试机会", remaining),
 			"oauth2Enabled":  h.authCfg.OAuth2Enabled,
 			"ldapEnabled":    h.authCfg.LDAPEnabled,
 			"oauth2Provider": h.authCfg.OAuth2Provider,
-		})
+		}))
 		return
 	}
 
 	// Look up or auto-create user by email
 	user, err := h.stores.Users.GetByEmail(email)
 	if err != nil {
-		c.HTML(200, "login", gin.H{
-			"error":          "LDAP 账号未接入本系统，请联系管理员",
+		c.HTML(200, "login", withLang(c, gin.H{
+			"error":          i18n.T(langOf(c), "LDAP 账号未接入本系统，请联系管理员"),
 			"oauth2Enabled":  h.authCfg.OAuth2Enabled,
 			"ldapEnabled":    h.authCfg.LDAPEnabled,
 			"oauth2Provider": h.authCfg.OAuth2Provider,
-		})
+		}))
 		return
 	}
 
 	if !user.IsActive {
-		c.HTML(200, "login", gin.H{
-			"error":          "用户已被禁用",
+		c.HTML(200, "login", withLang(c, gin.H{
+			"error":          i18n.T(langOf(c), "用户已被禁用"),
 			"oauth2Enabled":  h.authCfg.OAuth2Enabled,
 			"ldapEnabled":    h.authCfg.LDAPEnabled,
 			"oauth2Provider": h.authCfg.OAuth2Provider,
-		})
+		}))
 		return
 	}
 
@@ -201,12 +202,12 @@ func (h *AuthHandler) LDAPLogin(c *gin.Context) {
 	session.Set("isAdmin", user.IsAdmin)
 	session.Set("loginAt", time.Now().Unix())
 	if err := session.Save(); err != nil {
-		c.HTML(200, "login", gin.H{
-			"error":          "会话保存失败，请重试",
+		c.HTML(200, "login", withLang(c, gin.H{
+			"error":          i18n.T(langOf(c), "会话保存失败，请重试"),
 			"oauth2Enabled":  h.authCfg.OAuth2Enabled,
 			"ldapEnabled":    h.authCfg.LDAPEnabled,
 			"oauth2Provider": h.authCfg.OAuth2Provider,
-		})
+		}))
 		return
 	}
 
@@ -246,7 +247,7 @@ func (h *AuthHandler) oauth2LoginVars() gin.H {
 // OAuth2Start redirects to the OAuth2 provider's authorization page.
 func (h *AuthHandler) OAuth2Start(c *gin.Context) {
 	if !h.authCfg.OAuth2Enabled {
-		c.String(http.StatusBadRequest, "OAuth2 未启用")
+		c.String(http.StatusBadRequest, i18n.T(langOf(c), "OAuth2 未启用"))
 		return
 	}
 
@@ -254,7 +255,7 @@ func (h *AuthHandler) OAuth2Start(c *gin.Context) {
 	state, err := randomOAuth2State()
 	if err != nil {
 		log.Printf("生成 OAuth2 state 失败: %v", err)
-		c.String(http.StatusInternalServerError, "OAuth2 登录暂不可用，请稍后重试")
+		c.String(http.StatusInternalServerError, i18n.T(langOf(c), "OAuth2 登录暂不可用，请稍后重试"))
 		return
 	}
 	c.SetCookie(oauth2StateCookie, state, oauth2StateMaxAge, "/auth/oauth2", "", true, true)
@@ -264,7 +265,7 @@ func (h *AuthHandler) OAuth2Start(c *gin.Context) {
 // OAuth2Callback handles the OAuth2 provider's callback after user authorization.
 func (h *AuthHandler) OAuth2Callback(c *gin.Context) {
 	if !h.authCfg.OAuth2Enabled {
-		c.String(http.StatusBadRequest, "OAuth2 未启用")
+		c.String(http.StatusBadRequest, i18n.T(langOf(c), "OAuth2 未启用"))
 		return
 	}
 
@@ -274,11 +275,11 @@ func (h *AuthHandler) OAuth2Callback(c *gin.Context) {
 	reqState := c.Query("state")
 	if cookieErr != nil || reqState == "" ||
 		subtle.ConstantTimeCompare([]byte(cookieState), []byte(reqState)) != 1 {
-		c.HTML(http.StatusForbidden, "login", func() gin.H {
+		c.HTML(http.StatusForbidden, "login", withLang(c, func() gin.H {
 			v := h.oauth2LoginVars()
-			v["error"] = "OAuth2 state 校验失败，请重新发起登录"
+			v["error"] = i18n.T(langOf(c), "OAuth2 state 校验失败，请重新发起登录")
 			return v
-		}())
+		}()))
 		return
 	}
 	// state 一次性使用：无论后续成败都立即失效
@@ -286,12 +287,12 @@ func (h *AuthHandler) OAuth2Callback(c *gin.Context) {
 
 	code := c.Query("code")
 	if code == "" {
-		c.HTML(200, "login", gin.H{
-			"error":          "OAuth2 授权码缺失",
+		c.HTML(200, "login", withLang(c, gin.H{
+			"error":          i18n.T(langOf(c), "OAuth2 授权码缺失"),
 			"oauth2Enabled":  h.authCfg.OAuth2Enabled,
 			"ldapEnabled":    h.authCfg.LDAPEnabled,
 			"oauth2Provider": h.authCfg.OAuth2Provider,
-		})
+		}))
 		return
 	}
 
@@ -299,34 +300,34 @@ func (h *AuthHandler) OAuth2Callback(c *gin.Context) {
 	email, err := provider.HandleCallback(code)
 	if err != nil {
 		log.Printf("OAuth2 回调失败: %v", err)
-		c.HTML(200, "login", gin.H{
-			"error":          "OAuth2 认证失败，请重试或联系管理员",
+		c.HTML(200, "login", withLang(c, gin.H{
+			"error":          i18n.T(langOf(c), "OAuth2 认证失败，请重试或联系管理员"),
 			"oauth2Enabled":  h.authCfg.OAuth2Enabled,
 			"ldapEnabled":    h.authCfg.LDAPEnabled,
 			"oauth2Provider": h.authCfg.OAuth2Provider,
-		})
+		}))
 		return
 	}
 
 	// Look up user by email
 	user, err := h.stores.Users.GetByEmail(email)
 	if err != nil {
-		c.HTML(200, "login", gin.H{
-			"error":          "OAuth2 账号未接入本系统，请联系管理员",
+		c.HTML(200, "login", withLang(c, gin.H{
+			"error":          i18n.T(langOf(c), "OAuth2 账号未接入本系统，请联系管理员"),
 			"oauth2Enabled":  h.authCfg.OAuth2Enabled,
 			"ldapEnabled":    h.authCfg.LDAPEnabled,
 			"oauth2Provider": h.authCfg.OAuth2Provider,
-		})
+		}))
 		return
 	}
 
 	if !user.IsActive {
-		c.HTML(200, "login", gin.H{
-			"error":          "用户已被禁用",
+		c.HTML(200, "login", withLang(c, gin.H{
+			"error":          i18n.T(langOf(c), "用户已被禁用"),
 			"oauth2Enabled":  h.authCfg.OAuth2Enabled,
 			"ldapEnabled":    h.authCfg.LDAPEnabled,
 			"oauth2Provider": h.authCfg.OAuth2Provider,
-		})
+		}))
 		return
 	}
 
@@ -339,12 +340,12 @@ func (h *AuthHandler) OAuth2Callback(c *gin.Context) {
 	session.Set("isAdmin", user.IsAdmin)
 	session.Set("loginAt", time.Now().Unix())
 	if err := session.Save(); err != nil {
-		c.HTML(200, "login", gin.H{
-			"error":          "会话保存失败，请重试",
+		c.HTML(200, "login", withLang(c, gin.H{
+			"error":          i18n.T(langOf(c), "会话保存失败，请重试"),
 			"oauth2Enabled":  h.authCfg.OAuth2Enabled,
 			"ldapEnabled":    h.authCfg.LDAPEnabled,
 			"oauth2Provider": h.authCfg.OAuth2Provider,
-		})
+		}))
 		return
 	}
 

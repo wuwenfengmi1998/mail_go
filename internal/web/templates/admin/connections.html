@@ -1,10 +1,10 @@
 {{define "admin_connections"}}
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{htmlLang .Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>当前连接 - MailGo</title>
+    <title>{{t .Lang "当前连接"}} - MailGo</title>
     <meta http-equiv="refresh" content="5">
     {{template "styles" .}}
 </head>
@@ -13,26 +13,26 @@
     <div class="container">
         <div class="clearfix">
             <div class="sidebar">
-                <a href="/inbox">返回邮箱</a>
-                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>控制面板</a>
-                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>域名管理</a>
-                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>用户管理</a>
-                <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>所有邮件</a>
-                <a href="/admin/outbound" {{if eq .activeFolder "outbound"}}class="active"{{end}}>外发队列</a>
-                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>协议日志</a>
-                <a href="/admin/connections" {{if eq .activeFolder "connections"}}class="active"{{end}}>当前连接</a>
-                <a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>IP黑名单</a>
+                <a href="/inbox">{{t .Lang "返回邮箱"}}</a>
+                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>{{t .Lang "控制面板"}}</a>
+                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>{{t .Lang "域名管理"}}</a>
+                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>{{t .Lang "用户管理"}}</a>
+                <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>{{t .Lang "所有邮件"}}</a>
+                <a href="/admin/outbound" {{if eq .activeFolder "outbound"}}class="active"{{end}}>{{t .Lang "外发队列"}}</a>
+                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>{{t .Lang "协议日志"}}</a>
+                <a href="/admin/connections" {{if eq .activeFolder "connections"}}class="active"{{end}}>{{t .Lang "当前连接"}}</a>
+                <a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>{{t .Lang "IP黑名单"}}</a>
             </div>
             <div class="content">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-                    <h2>当前连接（SMTP / IMAP / POP3）</h2>
-                    <span style="color:#7f8c8d;font-size:13px;">每 5 秒自动刷新</span>
+                    <h2>{{t .Lang "当前连接（SMTP / IMAP / POP3）"}}</h2>
+                    <span style="color:#7f8c8d;font-size:13px;">{{t .Lang "每 5 秒自动刷新"}}</span>
                 </div>
 
                 <div style="margin-bottom:24px;">
                     <div class="stat-card">
                         <h3>{{.total}}</h3>
-                        <p>当前连接总数</p>
+                        <p>{{t .Lang "当前连接总数"}}</p>
                     </div>
                     <div class="stat-card">
                         <h3>{{.smtpCount}}</h3>
@@ -53,15 +53,15 @@
                         <thead>
                             <tr>
                                 <th>ID</th>
-                                <th>协议</th>
-                                <th>来源 IP</th>
-                                <th>端口</th>
-                                <th>用户名</th>
+                                <th>{{t .Lang "协议"}}</th>
+                                <th>{{t .Lang "来源 IP"}}</th>
+                                <th>{{t .Lang "端口"}}</th>
+                                <th>{{t .Lang "用户名"}}</th>
                                 <th>TLS</th>
-                                <th>连接时间</th>
-                                <th>时长</th>
-                                <th>最后活跃</th>
-                                <th>操作</th>
+                                <th>{{t .Lang "连接时间"}}</th>
+                                <th>{{t .Lang "时长"}}</th>
+                                <th>{{t .Lang "最后活跃"}}</th>
+                                <th>{{t .Lang "操作"}}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -76,19 +76,19 @@
                                 <td>{{.IP}}</td>
                                 <td>{{.Port}}</td>
                                 <td>{{if .User}}{{.User}}{{else}}—{{end}}</td>
-                                <td>{{if .TLS}}<span class="badge" style="background:#27ae60;color:#fff;">TLS</span>{{else}}<span class="badge" style="background:#95a5a6;color:#fff;">明文</span>{{end}}</td>
-                                <td>{{time12 .Connected}}</td>
+                                <td>{{if .TLS}}<span class="badge" style="background:#27ae60;color:#fff;">TLS</span>{{else}}<span class="badge" style="background:#95a5a6;color:#fff;">{{t $.Lang "明文"}}</span>{{end}}</td>
+                                <td>{{time12 $.Lang .Connected}}</td>
                                 <td>{{durationSeconds ($.now.Sub .Connected)}}s</td>
-                                <td>{{time12 .LastActive}}</td>
+                                <td>{{time12 $.Lang .LastActive}}</td>
                                 <td>
                                     <form method="POST" action="/admin/connections/{{.ID}}/disconnect" style="display:inline;"
-                                          onsubmit="return confirm('确定要断开 IP {{.IP}} 的所有连接并加入黑名单（180 天）吗？');">
-                                        <button type="submit" class="btn btn-sm btn-danger">断开并封禁</button>
+                                          onsubmit="return confirm('{{tf $.Lang "确定要断开 IP %s 的所有连接并加入黑名单（180 天）吗？" .IP}}');">
+                                        <button type="submit" class="btn btn-sm btn-danger">{{t $.Lang "断开并封禁"}}</button>
                                     </form>
                                 </td>
                             </tr>
                             {{else}}
-                            <tr><td colspan="10" style="text-align:center;color:#7f8c8d;">当前没有活动连接</td></tr>
+                            <tr><td colspan="10" style="text-align:center;color:#7f8c8d;">{{t $.Lang "当前没有活动连接"}}</td></tr>
                             {{end}}
                         </tbody>
                     </table>

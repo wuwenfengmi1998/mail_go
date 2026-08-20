@@ -1,10 +1,10 @@
 {{define "admin_user_form"}}
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{htmlLang .Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>{{if .isEdit}}编辑用户{{else}}新增用户{{end}} - MailGo</title>
+    <title>{{if .isEdit}}{{t .Lang "编辑用户"}}{{else}}{{t .Lang "新增用户"}}{{end}} - MailGo</title>
     {{template "styles" .}}
 </head>
 <body>
@@ -12,58 +12,67 @@
     <div class="container">
         <div class="clearfix">
             <div class="sidebar">
-                <a href="/inbox">返回邮箱</a>
-                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>控制面板</a>
-                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>域名管理</a>
-                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>用户管理</a>
-                <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>所有邮件</a>
-                <a href="/admin/outbound" {{if eq .activeFolder "outbound"}}class="active"{{end}}>外发队列</a>
-                                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>协议日志</a>
-                <a href="/admin/connections" {{if eq .activeFolder "connections"}}class="active"{{end}}>当前连接</a>
-<a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>IP黑名单</a>
+                <a href="/inbox">{{t .Lang "返回邮箱"}}</a>
+                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>{{t .Lang "控制面板"}}</a>
+                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>{{t .Lang "域名管理"}}</a>
+                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>{{t .Lang "用户管理"}}</a>
+                <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>{{t .Lang "所有邮件"}}</a>
+                <a href="/admin/outbound" {{if eq .activeFolder "outbound"}}class="active"{{end}}>{{t .Lang "外发队列"}}</a>
+                                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>{{t .Lang "协议日志"}}</a>
+                <a href="/admin/connections" {{if eq .activeFolder "connections"}}class="active"{{end}}>{{t .Lang "当前连接"}}</a>
+<a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>{{t .Lang "IP黑名单"}}</a>
             </div>
             <div class="content">
                 <div class="card">
-                    <h2 style="margin-bottom:16px;">{{if .isEdit}}编辑用户{{else}}新增用户{{end}}</h2>
+                    <h2 style="margin-bottom:16px;">{{if .isEdit}}{{t .Lang "编辑用户"}}{{else}}{{t .Lang "新增用户"}}{{end}}</h2>
                     {{if .error}}<div class="alert alert-error">{{.error}}</div>{{end}}
                     <form method="POST" action="{{if .isEdit}}/admin/users/{{.user.ID}}{{else}}/admin/users{{end}}">
                         <div class="form-group">
-                            <label>用户名</label>
+                            <label>{{t .Lang "用户名"}}</label>
                             <input type="text" name="username" required value="{{.user.Username}}" placeholder="username">
                         </div>
                         <div class="form-group">
-                            <label>{{if .isEdit}}新密码（留空则不修改）{{else}}密码{{end}}</label>
-                            <input type="password" name="password" {{if not .isEdit}}required{{end}} placeholder="请输入密码">
+                            <label>{{if .isEdit}}{{t .Lang "新密码（留空则不修改）"}}{{else}}{{t .Lang "密码"}}{{end}}</label>
+                            <input type="password" name="password" {{if not .isEdit}}required{{end}} placeholder="{{t .Lang "请输入密码"}}">
                         </div>
                         <div class="form-group">
-                            <label>域名</label>
+                            <label>{{t .Lang "界面语言"}}</label>
+                            <select name="language">
+                                <option value="auto" {{if eq .user.Language "auto"}}selected{{end}}>{{t .Lang "自动（跟随浏览器）"}}</option>
+                                <option value="en" {{if eq .user.Language "en"}}selected{{end}}>English</option>
+                                <option value="zh" {{if eq .user.Language "zh"}}selected{{end}}>中文</option>
+                                <option value="ja" {{if eq .user.Language "ja"}}selected{{end}}>日本語</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>{{t .Lang "域名"}}</label>
                             <select name="domain_id" required>
-                                <option value="">请选择域名</option>
+                                <option value="">{{t .Lang "请选择域名"}}</option>
                                 {{range .domains}}
                                 <option value="{{.ID}}" {{if eq .ID $.user.DomainID}}selected{{end}}>{{.Name}}</option>
                                 {{end}}
                             </select>
                         </div>
                         <div class="form-group">
-                            <label>配额 (GB)</label>
+                            <label>{{t .Lang "配额 (GB)"}}</label>
                             <input type="number" name="quota_gb" min="1" value="5" placeholder="5">
                         </div>
                         <div class="form-group">
                             <label>
                                 <input type="checkbox" name="is_admin" {{if .user.IsAdmin}}checked{{end}}>
-                                管理员
+                                {{t .Lang "管理员"}}
                             </label>
                         </div>
                         {{if .isEdit}}
                         <div class="form-group">
                             <label>
                                 <input type="checkbox" name="is_active" {{if .user.IsActive}}checked{{end}}>
-                                启用账户
+                                {{t .Lang "启用账户"}}
                             </label>
                         </div>
                         {{end}}
-                        <button type="submit" class="btn btn-primary">{{if .isEdit}}保存更改{{else}}创建用户{{end}}</button>
-                        <a href="/admin/users" class="btn" style="margin-left:8px;background:#bdc3c7;color:#fff;">取消</a>
+                        <button type="submit" class="btn btn-primary">{{if .isEdit}}{{t .Lang "保存更改"}}{{else}}{{t .Lang "创建用户"}}{{end}}</button>
+                        <a href="/admin/users" class="btn" style="margin-left:8px;background:#bdc3c7;color:#fff;">{{t .Lang "取消"}}</a>
                     </form>
                 </div>
             </div>

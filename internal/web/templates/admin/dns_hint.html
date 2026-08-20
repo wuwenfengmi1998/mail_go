@@ -1,10 +1,10 @@
 {{define "admin_dns_hint"}}
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{htmlLang .Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>DNS配置 - MailGo</title>
+    <title>{{t .Lang "DNS配置"}} - MailGo</title>
     {{template "styles" .}}
 </head>
 <body>
@@ -12,39 +12,39 @@
     <div class="container">
         <div class="clearfix">
             <div class="sidebar">
-                <a href="/inbox">返回邮箱</a>
-                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>控制面板</a>
-                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>域名管理</a>
-                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>用户管理</a>
-                <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>所有邮件</a>
-                <a href="/admin/outbound" {{if eq .activeFolder "outbound"}}class="active"{{end}}>外发队列</a>
-                                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>协议日志</a>
-                <a href="/admin/connections" {{if eq .activeFolder "connections"}}class="active"{{end}}>当前连接</a>
-<a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>IP黑名单</a>
+                <a href="/inbox">{{t .Lang "返回邮箱"}}</a>
+                <a href="/admin" {{if eq .activeFolder "admin"}}class="active"{{end}}>{{t .Lang "控制面板"}}</a>
+                <a href="/admin/domains" {{if eq .activeFolder "domains"}}class="active"{{end}}>{{t .Lang "域名管理"}}</a>
+                <a href="/admin/users" {{if eq .activeFolder "users"}}class="active"{{end}}>{{t .Lang "用户管理"}}</a>
+                <a href="/admin/mails" {{if eq .activeFolder "mails"}}class="active"{{end}}>{{t .Lang "所有邮件"}}</a>
+                <a href="/admin/outbound" {{if eq .activeFolder "outbound"}}class="active"{{end}}>{{t .Lang "外发队列"}}</a>
+                                <a href="/admin/protocol-logs" {{if eq .activeFolder "protocol-logs"}}class="active"{{end}}>{{t .Lang "协议日志"}}</a>
+                <a href="/admin/connections" {{if eq .activeFolder "connections"}}class="active"{{end}}>{{t .Lang "当前连接"}}</a>
+<a href="/admin/bans" {{if eq .activeFolder "bans"}}class="active"{{end}}>{{t .Lang "IP黑名单"}}</a>
             </div>
             <div class="content">
                 <div class="card">
-                    <h2 style="margin-bottom:16px;">DNS 配置提示 — {{.domain.Name}}</h2>
-                    <p style="margin-bottom:16px;color:#7f8c8d;">请在您的 DNS 服务商处添加以下记录：</p>
+                    <h2 style="margin-bottom:16px;">{{tf .Lang "DNS 配置提示 — %s" .domain.Name}}</h2>
+                    <p style="margin-bottom:16px;color:#7f8c8d;">{{t .Lang "请在您的 DNS 服务商处添加以下记录："}}</p>
 
-                    <h4 style="margin-bottom:8px;">MX 记录</h4>
+                    <h4 style="margin-bottom:8px;">{{t .Lang "MX 记录"}}</h4>
                     <div class="dns-record">@ IN MX 10 mail.{{.domain.Name}}.</div>
 
-                    <h4 style="margin-bottom:8px;">SPF 记录 (TXT)</h4>
+                    <h4 style="margin-bottom:8px;">{{t .Lang "SPF 记录 (TXT)"}}</h4>
                     <div class="dns-record">@ IN TXT "v=spf1 mx -all"</div>
 
-                    <h4 style="margin-bottom:8px;">DKIM 记录 (TXT)</h4>
+                    <h4 style="margin-bottom:8px;">{{t .Lang "DKIM 记录 (TXT)"}}</h4>
                     {{if .domain.DkimPublicKey}}
                     <div class="dns-record">default._domainkey.{{.domain.Name}}. IN TXT "{{.dkimRecord}}"</div>
                     {{else}}
-                    <div class="dns-record" style="color:#e67e22;">⚠️ DKIM 密钥尚未生成，请编辑域名重新生成。</div>
+                    <div class="dns-record" style="color:#e67e22;">{{t .Lang "⚠️ DKIM 密钥尚未生成，请编辑域名重新生成。"}}</div>
                     {{end}}
 
-                    <h4 style="margin-bottom:8px;">DMARC 记录</h4>
+                    <h4 style="margin-bottom:8px;">{{t .Lang "DMARC 记录"}}</h4>
                     <div class="dns-record">_dmarc.{{.domain.Name}}. IN TXT "v=DMARC1; p=none; rua=mailto:postmaster@{{.domain.Name}}"</div>
 
                     <div style="margin-top:24px;">
-                        <a href="/admin/domains" class="btn" style="background:#bdc3c7;color:#fff;">返回域名列表</a>
+                        <a href="/admin/domains" class="btn" style="background:#bdc3c7;color:#fff;">{{t .Lang "返回域名列表"}}</a>
                     </div>
                 </div>
             </div>

@@ -5,6 +5,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"math"
 	"net/http"
@@ -25,13 +26,19 @@ import (
 // templateFuncs 等价，但 handlers 包无法反向依赖 web 包）。
 func testTemplateFuncs() template.FuncMap {
 	return template.FuncMap{
-		"add":        func(a, b int) int { return a + b },
-		"sub":        func(a, b int) int { return a - b },
-		"mul":        func(a, b int) int { return a * b },
-		"div":        func(a, b int) int { return a / b },
-		"mod":        func(a, b int) int { return a % b },
-		"ceilDiv":    func(a, b int) int { return int(math.Ceil(float64(a) / float64(b))) },
-		"seq":        func(n int) []int { r := make([]int, n); for i := range r { r[i] = i + 1 }; return r },
+		"add":     func(a, b int) int { return a + b },
+		"sub":     func(a, b int) int { return a - b },
+		"mul":     func(a, b int) int { return a * b },
+		"div":     func(a, b int) int { return a / b },
+		"mod":     func(a, b int) int { return a % b },
+		"ceilDiv": func(a, b int) int { return int(math.Ceil(float64(a) / float64(b))) },
+		"seq": func(n int) []int {
+			r := make([]int, n)
+			for i := range r {
+				r[i] = i + 1
+			}
+			return r
+		},
 		"domainName": func(domainID uint, domains []interface{}) string { return "Domain #1" },
 		"jsonify": func(v interface{}) template.JS {
 			b, _ := json.Marshal(v)
@@ -45,13 +52,16 @@ func testTemplateFuncs() template.FuncMap {
 		"mailEmail":    func(s string) string { return s },
 		"initial":      func(s string) string { return "?" },
 		"truncate":     func(s string, n int) string { return s },
-		"shortDate":    func(t time.Time) string { return t.Format("2006-01-02") },
+		"t":            func(lang, key string) string { return key },
+		"tf":           func(lang, key string, args ...interface{}) string { return fmt.Sprintf(key, args...) },
+		"htmlLang":     func(lang string) string { return "zh-CN" },
+		"shortDate":    func(lang string, t time.Time) string { return t.Format("2006-01-02") },
 		"localTime":    func(t time.Time) time.Time { return t },
-		"time12":       func(t time.Time) string { return t.Format("2006-01-02 15:04:05") },
-		"time12m":      func(t time.Time) string { return t.Format("2006-01-02 15:04") },
+		"time12":       func(lang string, t time.Time) string { return t.Format("2006-01-02 15:04:05") },
+		"time12m":      func(lang string, t time.Time) string { return t.Format("2006-01-02 15:04") },
 		"avatarStyle":  func(s string) string { return "background:#eee;color:#333" },
 		"urlPath":      func(s string) string { return url.PathEscape(s) },
-		"folderLabel":  func(s string) string { return s },
+		"folderLabel":  func(lang, s string) string { return s },
 	}
 }
 
@@ -66,7 +76,7 @@ func newOAuth2TestContext(t *testing.T) (*gin.Context, *AuthHandler, *httptest.R
 	c.Request = httptest.NewRequest(http.MethodGet, "/auth/oauth2", nil)
 
 	authCfg := config.AuthConfig{
-		OAuth2Enabled:      true,
+		OAuth2Enabled: true,
 		// 使用本地拒绝连接的地址作为 provider，token 交换快速失败，
 		// 测试不依赖外部网络。
 		OAuth2Provider:     "127.0.0.1:1",

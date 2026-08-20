@@ -1,10 +1,10 @@
 {{define "compose"}}
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{htmlLang .Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>写信 - MailGo</title>
+    <title>{{t .Lang "写信"}} - MailGo</title>
     <link href="/static/vendor/quill/quill.snow.css" rel="stylesheet">
     {{template "styles" .}}
 </head>
@@ -16,44 +16,44 @@
             <div class="compose-toolbar">
                 <button type="submit" form="compose-form" class="btn btn-primary">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-                    发送
+                    {{t .Lang "发送"}}
                 </button>
                 <label class="tb-btn" style="cursor:pointer;">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-                    附件
+                    {{t .Lang "附件"}}
                     <input type="file" name="attachments" id="attach-input" multiple style="display:none;">
                 </label>
-                <a href="/inbox" class="tb-btn">取消</a>
+                <a href="/inbox" class="tb-btn">{{t .Lang "取消"}}</a>
                 <div class="toolbar-spacer"></div>
-                <span class="page-info">撰写新邮件</span>
+                <span class="page-info">{{t .Lang "撰写新邮件"}}</span>
             </div>
 
             {{if .error}}<div class="alert alert-error" style="margin:12px 18px 0;">{{.error}}</div>{{end}}
 
             <form id="compose-form" class="compose-form" method="POST" action="/compose" enctype="multipart/form-data">
                 <div class="compose-field">
-                    <label>收件人</label>
-                    <input type="email" name="to" required value="{{.to}}" placeholder="输入收件人邮箱地址">
+                    <label>{{t .Lang "收件人"}}</label>
+                    <input type="email" name="to" required value="{{.to}}" placeholder="{{t .Lang "输入收件人邮箱地址"}}">
                 </div>
                 <div class="compose-field">
-                    <label>抄送</label>
-                    <input type="text" name="cc" value="{{.cc}}" placeholder="多个地址用逗号分隔（可选）">
+                    <label>{{t .Lang "抄送"}}</label>
+                    <input type="text" name="cc" value="{{.cc}}" placeholder="{{t .Lang "多个地址用逗号分隔（可选）"}}">
                 </div>
                 <div class="compose-field">
-                    <label>主题</label>
-                    <input type="text" name="subject" value="{{.subject}}" placeholder="输入邮件主题">
+                    <label>{{t .Lang "主题"}}</label>
+                    <input type="text" name="subject" value="{{.subject}}" placeholder="{{t .Lang "输入邮件主题"}}">
                 </div>
 
                 <div id="attach-chips" class="attach-chips" style="{{if not .attachments}}display:none;{{end}}"></div>
 
                 <div class="editor-wrap">
-                    <div id="editor" data-placeholder="请输入邮件内容..."></div>
+                    <div id="editor" data-placeholder="{{t .Lang "请输入邮件内容..."}}"></div>
                     <input type="hidden" name="body" id="body-hidden">
                     <input type="hidden" name="html_body" id="html-body-hidden">
                 </div>
 
                 <div class="compose-footer">
-                    <span>附件配额</span>
+                    <span>{{t .Lang "附件配额"}}</span>
                     <span class="quota-bar" id="quota-bar" data-used="{{.usedBytes}}" data-quota="{{.quotaBytes}}"><i></i></span>
                     <span id="quota-text">{{formatBytes .usedBytes}} / {{formatBytes .quotaBytes}}</span>
                 </div>
@@ -64,7 +64,7 @@
     <script>
     var quill = new Quill('#editor', {
         theme: 'snow',
-        placeholder: document.getElementById('editor').dataset.placeholder || '请输入邮件内容...',
+        placeholder: document.getElementById('editor').dataset.placeholder || '{{t .Lang "请输入邮件内容..."}}',
         modules: {
             toolbar: [
                 [{ 'header': [1, 2, 3, false] }],
@@ -96,7 +96,7 @@
             var chip = document.createElement('span');
             chip.className = 'attach-chip';
             chip.innerHTML = '📎 ' + f.name + ' (' + (f.size / 1024).toFixed(1) + ' KB)' +
-                '<button type="button" class="chip-del" data-i="' + i + '" title="移除">✕</button>';
+                '<button type="button" class="chip-del" data-i="' + i + '" title="{{t .Lang "移除"}}">✕</button>';
             chipsBox.appendChild(chip);
         });
     }
