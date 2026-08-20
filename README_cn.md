@@ -1,19 +1,21 @@
 # MailGo
 
+> [English](README.md) | 中文
+
 Go 语言编写的轻量级邮件系统，集成 SMTP / IMAP / POP3 协议服务和 Web 管理界面。
-Web 前端采用 QQ 邮箱风格的布局：顶部导航 + 左侧文件夹栏 + 邮件列表三栏设计。
+Web 前端的布局：顶部导航 + 左侧文件夹栏 + 邮件列表三栏设计。
 
 ## 功能特性
 
 - **邮件协议**：SMTP（发送）、IMAP（同步）、POP3（收取），均支持 TLS 加密
-- **外部投递**：认证用户可向外部邮箱（QQ/Gmail/Outlook 等）发送邮件，内置外发队列、**并发 worker 池投递**（默认 4 线程 + 每收件域并发上限 2）、MX 直投、STARTTLS、指数退避重试、退信通知与 DKIM 签名
-- **Web 邮箱**：QQ 邮箱风格界面，支持收件箱 / 已发送 / 草稿箱、未读角标与搜索过滤、全选 / 批量删除、发件人头像、富文本编辑（Quill.js）、附件上传/下载
-- **管理后台**：域名管理、用户管理、DKIM 密钥自动生成、DNS 配置提示、全量邮件查看、外发队列管理、IP 封禁管理、仪表盘统计
+- **外部投递**：认证用户可向外部邮箱（Gmail/Outlook 等）发送邮件，内置外发队列、**并发 worker 池投递**（默认 4 线程 + 每收件域并发上限 2）、MX 直投、STARTTLS、指数退避重试、退信通知与 DKIM 签名
+- **Web 邮箱**：文件夹数据驱动（Web 与 IMAP 共享 MailboxService，IMAP LIST 返回什么界面就显示什么），系统文件夹（收件箱 / 已发送 / 草稿箱 / 垃圾箱）与自定义文件夹管理、删除邮件移入垃圾箱（支持恢复 / 彻底删除 / 清空）、未读角标与搜索过滤、全选 / 批量删除、发件人头像、富文本编辑（Quill.js）、附件上传/下载
+- **管理后台**：域名管理、用户管理、DKIM 密钥自动生成、DNS 配置提示、全量邮件查看、外发队列管理、IP 封禁管理、仪表盘统计、时间统一按 Web 时区显示 12 小时制（上午/下午）
 - **协议调用日志**：SMTP / IMAP / POP3 每次连接自动记录来源 IP、用户名、成功/失败、失败原因与操作摘要，可按协议/状态/IP/用户名/时间筛选，用于分析密码爆破、中继滥用等攻击行为（默认保留 30 天，自动清理）
 - **IMAP 新邮件推送**：本地投递（SMTP/Web 写信）成功后实时推送，挂起 IDLE 的客户端即时收到新邮件通知（无需轮询）；其他客户端造成的已读/星标/删除变化也实时同步（IMAP STORE/EXPUNGE、POP3 删除、Web 标已读/删除）
 - **当前连接监控**：管理后台实时查看 SMTP/IMAP/POP3 活动连接（来源 IP、用户名、TLS、时长），每 5 秒自动刷新；支持「断开并封禁」一键封禁该 IP 全部在线连接（封禁 180 天，可随时解封）
 - **外部认证**：OAuth2（Google / GitHub）、LDAP（可选，默认关闭）
-- **安全机制**：BCrypt 密码哈希、登录失败自动封禁 IP（**阶段性封禁**：前 3 次达到失败阈值只计数，第 4 次起封禁并按档位递增 30分钟 → 3小时 → 3个月 → 半年，成功登录清零）、外发频率限制（防滥用）、非认证禁止中继（防开放中继）、管理员可解封
+- **安全机制**：BCrypt 密码哈希、登录失败自动封禁 IP（**阶段性封禁**：前 3 次达到失败阈值只计数，第 4 次起封禁并按档位递增 30分钟 → 3小时 → 3个月 → 半年，成功登录清零；**枚举爆破无宽限**：用户名不存在的失败跳过宽限、首次触发即封禁）、外发频率限制（防滥用）、非认证禁止中继（防开放中继）、管理员可解封
 - **多数据库**：默认 SQLite，可切换 MySQL
 - **跨平台**：Linux 生产部署 + Windows 本地调试
 
@@ -48,9 +50,9 @@ go build -o mailgo .
 | 项目 | 值 |
 |------|-----|
 | 邮箱 | `admin@example.com` |
-| 密码 | `admin` |
+| 初始密码 | 随机生成（16 位，数字+大小写字母），仅在启动日志中打印一次；也可用环境变量 `MAILGO_ADMIN_PASSWORD` 预先指定 |
 
-> ⚠️ 请在生产环境中立即修改默认密码。
+> ⚠️ 该账户已标记「首次登录必须修改密码」，登录后请在 设置 页面立即改密。
 
 ### 访问
 
@@ -363,6 +365,18 @@ relay_starttls = true
 
 中继使用 AUTH PLAIN 认证；本地收件人仍走本地投递，不受影响。
 
+### 8. 指定初始管理员密码
+
+首次启动创建管理员账户时，初始密码默认随机生成并仅在启动日志中打印一次；
+如需预先指定（例如部署脚本），可设置环境变量 `MAILGO_ADMIN_PASSWORD`：
+
+```bash
+MAILGO_ADMIN_PASSWORD="$(openssl rand -base64 12)" ./mailgo
+```
+
+该变量仅在首次创建管理员账户时生效（账户已存在则忽略）；无论哪种方式，
+首次登录都会强制修改密码。
+
 ---
 
 ## 端口速查
@@ -392,6 +406,7 @@ mailgo/
 │   │   ├── stores.go                # Store 聚合器
 │   │   ├── user_store.go            # 用户数据操作
 │   │   ├── mail_store.go            # 邮件数据操作
+│   │   ├── mailbox_store.go         # 文件夹（IMAP mailbox）数据操作
 │   │   ├── domain_store.go          # 域名数据操作
 │   │   ├── attachment_store.go      # 附件数据操作
 │   │   ├── outbound_store.go        # 外发队列数据操作
@@ -404,6 +419,7 @@ mailgo/
 │   │   └── sign.go                 # DKIM 签名
 │   ├── imap_server/
 │   │   ├── server.go                # IMAP 服务（监听器/能力/跨会话推送）
+│   │   ├── service.go               # MailboxService（IMAP 会话与 Web 共享）
 │   │   └── session.go               # IMAP Session 实现（SELECT/FETCH/STORE/EXPUNGE）
 │   ├── pop3_server/server.go         # POP3 服务
 │   ├── connhub/hub.go                # 协议连接注册中心（当前连接监控）
@@ -524,7 +540,7 @@ sudo journalctl -u mailgo -f
 | IMAP | github.com/emersion/go-imap/v2 |
 | POP3 | 手工实现 TCP 协议 |
 | 密码哈希 | golang.org/x/crypto/bcrypt |
-| 富文本 | Quill.js (CDN) |
+| 富文本 | Quill.js（go:embed 内嵌，离线可用） |
 | OAuth2 | golang.org/x/oauth2 |
 | LDAP | github.com/go-ldap/ldap/v3 |
 | DKIM | RSA 2048 自动生成 |
@@ -533,11 +549,11 @@ sudo journalctl -u mailgo -f
 
 ## 默认账户
 
-| 角色 | 邮箱 | 密码 | 默认配额 |
-|------|------|------|---------|
-| 管理员 | admin@example.com | admin | 5 GB |
+| 角色 | 邮箱 | 初始密码 | 默认配额 |
+|------|------|---------|---------|
+| 管理员 | admin@example.com | 随机生成（启动日志打印一次）或 `MAILGO_ADMIN_PASSWORD` 指定 | 5 GB |
 
-> ⚠️ 部署到生产环境后请立即修改管理员密码。
+> ⚠️ 首次登录强制修改密码（管理员重置密码同样触发）；部署到生产环境后请立即完成改密。
 
 ## License
 
