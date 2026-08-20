@@ -60,6 +60,8 @@ func InitDB(cfg config.DatabaseConfig, storageCfg config.StorageConfig) (*gorm.D
 	// ip_address 将升级为唯一索引，重复行会使索引创建失败。
 	// 首次安装表不存在时忽略错误（AutoMigrate 会建新表）。
 	dedupeBanEntries(db)
+	// 再清理旧模型遗留的同名非唯一索引（见 dropLegacyBanIndex）。
+	dropLegacyBanIndex(db)
 
 	// Auto-migrate all models
 	if err := db.AutoMigrate(&User{}, &Domain{}, &Message{}, &Attachment{}, &BanEntry{}, &OutboundMessage{}, &ProtocolLog{}, &MailboxState{}, &Mailbox{}); err != nil {
@@ -86,4 +88,39 @@ func dedupeBanEntries(db *gorm.DB) {
 		}
 		log.Printf("清理 ban_entries 重复行失败（唯一索引可能无法创建）: %v", err)
 	}
+}
+
+// dropLegacyBanIndex 删除 ban_entries 上历史遗留的同名非唯一索引
+// （旧模型 IPAddress 为普通 `index` 时由 AutoMigrate 创建）。
+// IPAddress 升级为 uniqueIndex 后，MySQL 的 MigrateColumnUnique 会对
+// 非唯一列无条件执行 CREATE UNIQUE INDEX（该路径不检查 HasIndex），
+// 与同名旧索引冲突时报 Error 1061 Duplicate key name，导致启动即失败
+// （AutoMigrate 末尾按名查 HasIndex 的保护根本执行不到）。
+// 仅 MySQL 存在此问题；SQLite 迁移路径不受影响。
+// 表不存在（首次安装）时静默跳过；失败仅告警，不阻断启动
+// （索引创建失败会在 AutoMigrate 中显式报错）。
+func dropLegacyBanIndex(db *gorm.DB) {
+	if db.Dialector.Name() != "mysql" {
+		return
+	}
+	var cnt int64
+	err := db.Raw(
+		"SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'ban_entries' AND index_name = 'idx_ban_entries_ip_address' AND non_unique = 1",
+	).Scan(&cnt).Error
+	if err != nil {
+		// 表不存在（首次安装）为预期情况
+		if strings.Contains(err.Error(), "doesn't exist") {
+			return
+		}
+		log.Printf("检查 ban_entries 遗留索引失败（唯一索引可能无法创建）: %v", err)
+		return
+	}
+	if cnt == 0 {
+		return
+	}
+	if err := db.Exec("ALTER TABLE `ban_entries` DROP INDEX `idx_ban_entries_ip_address`").Error; err != nil {
+		log.Printf("删除 ban_entries 遗留非唯一索引失败（唯一索引可能无法创建）: %v", err)
+		return
+	}
+	log.Printf("已删除 ban_entries 遗留非唯一索引 idx_ban_entries_ip_address（AutoMigrate 将重建为唯一索引）")
 }

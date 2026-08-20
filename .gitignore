@@ -47,3 +47,6 @@ win/srv/
 # 临时测试文件
 login_test.html
 migrate
+
+# 本地构建产物
+bin/
