@@ -1,6 +1,7 @@
 package store
 
 import (
+	"sync"
 	"net"
 	"path/filepath"
 	"strings"
@@ -33,7 +34,7 @@ func TestRecordAuthFailureFreeTriggers(t *testing.T) {
 	const maxFail = 2
 
 	failOnce := func() bool {
-		banned, _ := s.RecordAuthFailure(ip, maxFail, 30, "登录失败次数过多")
+		banned, _ := s.RecordAuthFailure(ip, maxFail, 30, "登录失败次数过多", true)
 		return banned
 	}
 
@@ -94,7 +95,7 @@ func TestStagedBanEscalation(t *testing.T) {
 	const maxFail = 2
 
 	failOnce := func() bool {
-		banned, _ := s.RecordAuthFailure(ip, maxFail, 30, "登录失败次数过多")
+		banned, _ := s.RecordAuthFailure(ip, maxFail, 30, "登录失败次数过多", true)
 		return banned
 	}
 
@@ -228,7 +229,7 @@ func TestBanListOnlyBannedOrExpired(t *testing.T) {
 // TestRecordAuthFailureEmptyIPSafe 空 IP 不应产生副作用。
 func TestRecordAuthFailureEmptyIPSafe(t *testing.T) {
 	s := newTestStores(t)
-	banned, count := s.RecordAuthFailure("", 3, 30, "登录失败次数过多")
+	banned, count := s.RecordAuthFailure("", 3, 30, "登录失败次数过多", true)
 	if banned || count != 0 {
 		t.Fatalf("empty IP must be a no-op: banned=%v count=%d", banned, count)
 	}
@@ -348,5 +349,202 @@ func TestTryReserveQuotaNonPositiveDelta(t *testing.T) {
 	got, _ := s.Users.GetByID(user.ID)
 	if got.UsedBytes != 0 {
 		t.Fatalf("used_bytes = %d, want 0", got.UsedBytes)
+	}
+}
+
+// P5 #18 方案 A：未知用户名（枚举型爆破）跳过宽限，首次触发即封。
+func TestRecordAuthFailureUnknownUserSkipsGrace(t *testing.T) {
+	s := newTestStores(t)
+	const ip = "203.0.113.77"
+	const maxFail = 3
+
+	// 未知用户名：第 1 次触发（累计失败 3 次）即封第 1 档（30 分钟）
+	for i := 1; i <= maxFail; i++ {
+		banned, _ := s.RecordAuthFailure(ip, maxFail, 30, "登录失败次数过多", false)
+		if i < maxFail && banned {
+			t.Fatalf("attempt %d should not ban before threshold", i)
+		}
+		if i == maxFail && !banned {
+			t.Fatal("unknown user: first trigger must ban immediately")
+		}
+	}
+	banned, entry := s.Bans.IsBanned(ip)
+	if !banned {
+		t.Fatal("IP should be banned")
+	}
+	// 第 1 档 = 30 分钟
+	if entry.ExpiresAt.Before(time.Now().Add(29 * time.Minute)) {
+		t.Fatalf("first-stage ban duration wrong: expires %v", entry.ExpiresAt)
+	}
+	if !strings.Contains(entry.Reason, "未知用户名") {
+		t.Fatalf("reason should note unknown-user skip: %q", entry.Reason)
+	}
+}
+
+// P5 #18 方案 A：已知用户名（真实用户输错）保留前 3 次宽限（回归）。
+// 触发语义与 TestRecordAuthFailureFreeTriggers 一致：达到阈值后每次失败
+// 都会触发一次，前 3 次触发（第 2-4 次失败）不封禁，第 4 次触发
+// （第 5 次失败）封第 1 档。
+func TestRecordAuthFailureKnownUserKeepsGrace(t *testing.T) {
+	s := newTestStores(t)
+	const ip = "198.51.100.88"
+	const maxFail = 2
+
+	// 第 1 次失败：计数，未达阈值
+	if banned, _ := s.RecordAuthFailure(ip, maxFail, 30, "登录失败次数过多", true); banned {
+		t.Fatal("failure 1 must not ban")
+	}
+	// 第 2-4 次失败 = 触发 1-3，宽限期内不封禁
+	for i := 2; i <= 4; i++ {
+		banned, _ := s.RecordAuthFailure(ip, maxFail, 30, "登录失败次数过多", true)
+		if banned {
+			t.Fatalf("failure %d (trigger within grace) should not ban", i)
+		}
+	}
+	if banned, _ := s.Bans.IsBanned(ip); banned {
+		t.Fatal("known user must not be banned within 3 free triggers")
+	}
+	entry, _ := s.Bans.GetByIP(ip)
+	if entry.BanCount != 3 {
+		t.Fatalf("ban_count = %d, want 3", entry.BanCount)
+	}
+
+	// 第 5 次失败 = 触发 4 -> 第 1 档封禁
+	banned, _ := s.RecordAuthFailure(ip, maxFail, 30, "登录失败次数过多", true)
+	if !banned {
+		t.Fatal("4th trigger should ban (stage 1)")
+	}
+	entry, _ = s.Bans.GetByIP(ip)
+	if entry.BanCount != 4 {
+		t.Fatalf("ban count = %d, want 4", entry.BanCount)
+	}
+	if !strings.Contains(entry.Reason, "第1次封禁") {
+		t.Fatalf("reason = %q, want 第1次封禁", entry.Reason)
+	}
+}
+
+// LoginExists：完整邮箱与裸用户名两种形态。
+func TestLoginExists(t *testing.T) {
+	s := newTestStores(t)
+	domain := &db.Domain{Name: "example.com"}
+	if err := s.Domains.Create(domain); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Users.Create(&db.User{Username: "alice", PasswordHash: "x", DomainID: domain.ID}); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		login string
+		want  bool
+	}{
+		{"alice@example.com", true},
+		{"alice", true},
+		{"bob@example.com", false},
+		{"bob", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := s.Users.LoginExists(tc.login); got != tc.want {
+			t.Errorf("LoginExists(%q) = %v, want %v", tc.login, got, tc.want)
+		}
+	}
+}
+
+// P4 #17：BanIP 为 upsert 语义，已有观察记录的 IP 手动封禁后仅一条记录。
+func TestBanIPUpsertSingleRow(t *testing.T) {
+	s := newTestStores(t)
+	const ip = "203.0.113.99"
+
+	// 先产生观察计数记录（未封禁）
+	for i := 0; i < 2; i++ {
+		_, _ = s.RecordAuthFailure(ip, 10, 30, "登录失败次数过多", true)
+	}
+	if banned, _ := s.Bans.IsBanned(ip); banned {
+		t.Fatal("should be observation-only at this point")
+	}
+
+	// 手动封禁 180 天
+	if err := s.Bans.BanIP(ip, "管理员手动封禁", 180*24*time.Hour); err != nil {
+		t.Fatalf("BanIP: %v", err)
+	}
+
+	// 仅一条记录，且处于封禁状态、计数清零
+	entry, err := s.Bans.GetByIP(ip)
+	if err != nil {
+		t.Fatalf("GetByIP: %v", err)
+	}
+	if entry.Reason != "管理员手动封禁" {
+		t.Fatalf("reason = %q", entry.Reason)
+	}
+	if entry.FailCount != 0 || entry.BanCount != 0 {
+		t.Fatalf("manual ban should reset counters, got fail=%d ban=%d", entry.FailCount, entry.BanCount)
+	}
+	if !entry.ExpiresAt.After(time.Now().Add(179 * 24 * time.Hour)) {
+		t.Fatalf("manual ban duration wrong: %v", entry.ExpiresAt)
+	}
+}
+
+// P4 #17：ip_address 唯一索引生效——同一 IP 不允许第二条记录
+// （历史重复行由 InitDB 的 dedupeBanEntries 在 AutoMigrate 前清理，
+// BanIP 的事务内“先删后插”兼容既有脏数据）。
+func TestBanEntryUniqueIndex(t *testing.T) {
+	s := newTestStores(t)
+	const ip = "198.51.100.3"
+
+	if err := s.Bans.Create(&db.BanEntry{IPAddress: ip, Reason: "first", ExpiresAt: time.Time{}}); err != nil {
+		t.Fatal(err)
+	}
+	// 第二条同 IP 记录必须被唯一约束拒绝
+	if err := s.Bans.Create(&db.BanEntry{IPAddress: ip, Reason: "second", ExpiresAt: time.Time{}}); err == nil {
+		t.Fatal("duplicate ban entry for same IP should be rejected by unique index")
+	}
+
+	// 唯一记录上的 BanIP/IncrementFail 读写一致（无错位）
+	if err := s.Bans.BanIP(ip, "管理员手动封禁", time.Hour); err != nil {
+		t.Fatalf("BanIP: %v", err)
+	}
+	entry, err := s.Bans.GetByIP(ip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.Reason != "管理员手动封禁" || entry.FailCount != 0 {
+		t.Fatalf("unexpected entry: %+v", entry)
+	}
+	cnt, err := s.Bans.IncrementFail(ip)
+	if err != nil || cnt != 1 {
+		t.Fatalf("IncrementFail after BanIP = %d, %v; want 1, nil", cnt, err)
+	}
+}
+
+// P4 #17：IncrementFail 并发安全（-race 下不产生重复行、计数准确）。
+func TestIncrementFailConcurrent(t *testing.T) {
+	s := newTestStores(t)
+	const ip = "203.0.113.100"
+	const goroutines = 16
+	const perG = 5
+
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < perG; i++ {
+				if _, err := s.Bans.IncrementFail(ip); err != nil {
+					t.Errorf("IncrementFail: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	entry, err := s.Bans.GetByIP(ip)
+	if err != nil {
+		t.Fatalf("GetByIP: %v", err)
+	}
+	want := goroutines * perG
+	if entry.FailCount != want {
+		t.Fatalf("fail count = %d, want %d (lost updates or duplicate rows)", entry.FailCount, want)
 	}
 }

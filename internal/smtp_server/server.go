@@ -221,12 +221,14 @@ func (s *smtpSession) Auth(mech string) (sasl.Server, error) {
 
 		user, err := s.backend.server.stores.Users.AuthenticateLogin(username, password)
 		if err != nil {
-			// 认证失败计数，达到阈值按档位封禁（与 Web 登录共用 ban_entries）
+			// 认证失败计数，达到阈值按档位封禁（与 Web 登录共用 ban_entries）。
+			// 用户名不存在（枚举型爆破）跳过宽限首次触发即封。
 			s.backend.server.stores.RecordAuthFailure(
 				s.clientIP,
 				s.backend.server.banCfg.MaxFailAttempts,
 				s.backend.server.banCfg.BanDurationMin,
 				"邮件协议认证失败次数过多",
+				s.backend.server.stores.Users.LoginExists(username),
 			)
 			s.recordFail("用户名或密码错误")
 			return smtp.ErrAuthFailed

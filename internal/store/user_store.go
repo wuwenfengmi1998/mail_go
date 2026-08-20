@@ -20,6 +20,10 @@ type UserStore interface {
 	// 但支持裸用户名（如 "kevin"），自动解析到其唯一所属域名；多域名下
 	// 用户名存在歧义时要求完整邮箱。兼容手机/客户端只填用户名的配置。
 	AuthenticateLogin(login, password string) (*db.User, error)
+	// LoginExists 判断登录名（完整邮箱或裸用户名）是否对应系统中的用户，
+	// 供封禁逻辑区分“真实用户输错密码”（保留宽限）与“枚举型爆破”
+	// （跳过宽限，见 RecordAuthFailure 的 knownUser 参数）。
+	LoginExists(login string) bool
 	Update(user *db.User) error
 	Delete(id uint) error
 	List(domainID uint, page, size int) ([]db.User, int64, error)
@@ -125,6 +129,25 @@ func (s *userStoreGorm) AuthenticateLogin(login, password string) (*db.User, err
 		return nil, ErrInvalidCredentials
 	}
 	return &user, nil
+}
+
+// LoginExists 判断登录名是否对应系统中的用户：完整邮箱按邮箱查，
+// 裸用户名按用户名全局查（存在即算，歧义不影响存在性判定）。
+// 仅用于封禁分级（knownUser），不做认证。
+func (s *userStoreGorm) LoginExists(login string) bool {
+	login = strings.TrimSpace(login)
+	if login == "" {
+		return false
+	}
+	if strings.Contains(login, "@") {
+		_, err := s.GetByEmail(login)
+		return err == nil
+	}
+	var count int64
+	if err := s.db.Model(&db.User{}).Where("username = ?", login).Count(&count).Error; err != nil {
+		return false
+	}
+	return count > 0
 }
 
 // Update saves changes to an existing user record.

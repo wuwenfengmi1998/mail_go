@@ -115,8 +115,10 @@ func (OutboundMessage) TableName() string {
 
 // BanEntry represents an IP address that has been banned due to excessive login failures.
 type BanEntry struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	IPAddress string    `gorm:"size:45;index;not null" json:"ip_address"`
+	ID uint `gorm:"primaryKey" json:"id"`
+	// IPAddress 唯一索引：每 IP 恰好一条记录（观察计数与封禁状态共用），
+	// 防止并发写入产生重复行导致计数与档位读写错位。
+	IPAddress string    `gorm:"size:45;uniqueIndex;not null" json:"ip_address"`
 	Reason    string    `gorm:"size:255" json:"reason"`
 	FailCount int       `gorm:"default:0" json:"fail_count"`
 	// BanCount 是该 IP 累计达到失败阈值的次数（含未封禁的前几次）。

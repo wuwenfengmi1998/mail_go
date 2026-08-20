@@ -73,7 +73,10 @@ func (h *AuthHandler) DoLogin(c *gin.Context) {
 
 	user, err := h.stores.Users.Authenticate(email, password)
 	if err != nil {
-		banned, failCount := h.stores.RecordAuthFailure(ip, h.banCfg.MaxFailAttempts, h.banCfg.BanDurationMin, "登录失败次数过多")
+		// 区分失败性质：用户名存在（真实用户输错，保留宽限）vs
+		// 用户名不存在（枚举型爆破，跳过宽限首次触发即封）
+		knownUser := h.stores.Users.LoginExists(email)
+		banned, failCount := h.stores.RecordAuthFailure(ip, h.banCfg.MaxFailAttempts, h.banCfg.BanDurationMin, "登录失败次数过多", knownUser)
 		if banned {
 			entry, _ := h.stores.Bans.GetByIP(ip)
 			c.HTML(http.StatusForbidden, "banned", gin.H{"entry": entry})
@@ -146,7 +149,8 @@ func (h *AuthHandler) LDAPLogin(c *gin.Context) {
 	if err != nil {
 		log.Printf("LDAP 认证失败: %v", err)
 
-		banned, failCount := h.stores.RecordAuthFailure(ip, h.banCfg.MaxFailAttempts, h.banCfg.BanDurationMin, "LDAP 登录失败次数过多")
+		// LDAP 侧用户存在性无法判定，保守按已知用户处理（保留宽限防误封）
+		banned, failCount := h.stores.RecordAuthFailure(ip, h.banCfg.MaxFailAttempts, h.banCfg.BanDurationMin, "LDAP 登录失败次数过多", true)
 		if banned {
 			entry, _ := h.stores.Bans.GetByIP(ip)
 			c.HTML(http.StatusForbidden, "banned", gin.H{"entry": entry})

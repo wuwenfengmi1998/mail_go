@@ -79,14 +79,10 @@ func (h *AdminHandler) DisconnectConnection(c *gin.Context) {
 		return
 	}
 
-	// 加入黑名单：180 天封禁（管理员可随时解封）
-	if err := h.stores.Bans.Create(&db.BanEntry{
-		IPAddress: conn.IP,
-		Reason:    "管理员手动封禁（连接断开）",
-		FailCount: 0,
-		BanCount:  0,
-		ExpiresAt: time.Now().Add(manualBanDuration),
-	}); err != nil {
+	// 加入黑名单：180 天封禁（管理员可随时解封）。
+	// BanIP 为 upsert 语义：清理该 IP 既有观察/重复记录后仅保留一条，
+	// 避免与阶段性封禁的计数/档位记录错位。
+	if err := h.stores.Bans.BanIP(conn.IP, "管理员手动封禁（连接断开）", manualBanDuration); err != nil {
 		c.String(http.StatusInternalServerError, "封禁失败: %v", err)
 		return
 	}

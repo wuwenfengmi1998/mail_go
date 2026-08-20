@@ -185,7 +185,43 @@
 2. ~~#2、#3、#4（P1）~~ 已完成 2026-08-19
 3. ~~#5-#11（P2）~~ 已完成 2026-08-19
 4. ~~#12-#16（P3）~~ 已完成 2026-08-19
+5. ~~#17（P4）、#18（P5，方案 A）~~ 已完成 2026-08-20
 
-**全部安全审计项已修复完成。** 剩余建议（非代码项）：
-- 部署侧：Caddy 加固（可选，应用层已加安全头）、8080 端口保持仅本机可达、GitHub 仓库中 3 个 50MB+ 的 exe 文件建议改用 LFS 或删除
-- 线上验证：部署新版后检查登录/收件箱/管理页、协议认证封禁、邮件远程图片加载（CSP 影响）
+## P4 低危：第二轮审计发现（2026-08-20，8ea4a62..37b4816）
+
+### 17. 手动封禁 Create 非 upsert，与阶段性封禁体系数据错位
+
+- [x] 位置：`internal/web/handlers/admin.go`（`DisconnectConnection`）、`internal/store/ban_store.go`、`internal/db/models.go`、`internal/db/db.go`
+- 现状：`f2493da` 阶段性封禁已改为"每 IP 一条记录 upsert"（`RecordAuthFailure` 内部 GetByIP + Update），但管理员"断开并封禁"仍直接 `Create`。`ip_address` 无唯一索引，当目标 IP 已有失败计数记录时会插入**第二条**记录，造成：
+  - `IncrementFail` 用 `First`（默认主键升序）更新**旧行**，`GetByIP` 用 `Order("id DESC")` 返回**新行** -> 自动封禁的档位判定（BanCount）与失败计数（FailCount）读写错行；
+  - `UnbanIP` 按 ID 删除一行后另一行仍在，可能出现"解封后仍被旧记录挡住/计数异常"。
+- 修复方案：
+  - [x] BanStore 新增 `BanIP(ip, reason, duration)`：事务内删除该 IP 全部既有记录（兼容历史脏数据）后插入单条封禁记录，计数清零（与"管理员解封清零"语义一致）；`DisconnectConnection` 改用该方法。
+  - [x] `BanEntry.IPAddress` 升级为 `uniqueIndex`；`InitDB` 在 AutoMigrate 前调用 `dedupeBanEntries` 清理历史重复行（保留每 IP 最大 id，SQLite/MySQL 兼容的派生表写法），表不存在时静默。
+  - [x] `IncrementFail` 原子化：SQL 侧 `fail_count + 1`，miss 时 `OnConflict DoNothing` 插入兜底并发竞态，回读计数。
+- 验证：
+  - [x] 单测：已有观察记录的 IP 手动封禁后仅一条、计数清零、封禁生效（`TestBanIPUpsertSingleRow`）。
+  - [x] 单测：同 IP 第二条记录被唯一约束拒绝（`TestBanEntryUniqueIndex`）。
+  - [x] 并发单测（`-race`）：16 协程并发 IncrementFail 计数精确无重复行（`TestIncrementFailConcurrent`）。
+  - [x] db 包单测：旧表重复行清理保留最大 id、表不存在静默（`dedupe_test.go`）。
+
+## P5 备注：产品权衡项（需决策后实施）
+
+### 18. 阶段性封禁"前 3 次触发不封禁"降低爆破门槛
+
+- [x] 位置：`internal/store/auth_guard.go`（`RecordAuthFailure`）、`internal/store/user_store.go`（`LoginExists`）、Web/LDAP/SMTP/IMAP/POP3 五处调用点
+- 现状：为防误封手机客户端（配置向导探测、裸用户名重试等），达到失败阈值记为一次触发，前 3 次**只计数不封禁**。副作用：攻击者每次触发前可"免费"尝试 `max_fail_attempts`（默认 5）次，即约 **15 次失败尝试零封禁**；第 4 次起才进入 30min -> 3h -> 3 个月 -> 半年的递增档位。长期防护足够，但自动化爆破的起步门槛降低。
+- 已实施（方案 A，2026-08-20）：
+  - [x] `RecordAuthFailure` 新增 `knownUser bool` 参数：用户名存在（真实用户输错）保留前 3 次宽限；用户名不存在（枚举型爆破）跳过宽限、首次触发即按第 1 档封禁，封禁原因注明"未知用户名，跳过宽限"。
+  - [x] 新增 `UserStore.LoginExists(login)`（完整邮箱或裸用户名），五个失败调用点按场景传入：Web 登录查邮箱存在性；SMTP/IMAP/POP3 用登录名查；LDAP 侧存在性无法判定，保守按已知用户处理（防误封）。
+- 验证：
+  - [x] A：未知用户名第 1 次触发即封（30 分钟，reason 含"未知用户名"）（`TestRecordAuthFailureUnknownUserSkipsGrace`）。
+  - [x] 已知用户名前 3 次触发不封、第 4 次封第 1 档（回归）（`TestRecordAuthFailureKnownUserKeepsGrace`）。
+  - [x] `LoginExists` 邮箱/裸用户名/不存在/空输入矩阵（`TestLoginExists`）。
+- 决策记录：**方案 A**（按失败性质区分宽限：真实用户防误封，枚举爆破即时封禁）——在不改变正常用户体验的前提下，让针对不存在账号的字典爆破首次达到阈值即被封，兼顾误封防护与爆破门槛。
+
+## 部署侧建议（非代码项）
+
+- Caddy 加固（可选，应用层已加安全头）、8080 端口保持仅本机可达。
+- GitHub 仓库中 3 个 50MB+ 的 exe 文件（mailgo.exe / mail_go.exe / mailgo_qa.exe）建议改用 Git LFS 或从历史中删除。
+- 线上验证：部署新版后检查登录/收件箱/管理页、协议认证封禁、邮件远程图片加载（CSP 影响）。

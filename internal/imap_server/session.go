@@ -220,7 +220,8 @@ func (s *imapSession) Login(username, password string) error {
 
 	user, err := s.srv.stores.Users.AuthenticateLogin(username, password)
 	if err != nil {
-		s.srv.stores.RecordAuthFailure(clientIP, s.srv.banCfg.MaxFailAttempts, s.srv.banCfg.BanDurationMin, "邮件协议认证失败次数过多")
+		// 用户名不存在（枚举型爆破）跳过宽限首次触发即封
+		s.srv.stores.RecordAuthFailure(clientIP, s.srv.banCfg.MaxFailAttempts, s.srv.banCfg.BanDurationMin, "邮件协议认证失败次数过多", s.srv.stores.Users.LoginExists(username))
 		s.recordLogin(clientIP, username, false, "用户名或密码错误", "LOGIN 失败", now)
 		return imapserver.ErrAuthFailed
 	}

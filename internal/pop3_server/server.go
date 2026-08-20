@@ -397,8 +397,9 @@ func (s *POP3Server) handlePASS(conn net.Conn, password string, user *db.User) (
 
 	authUser, err := s.stores.Users.AuthenticateLogin(user.Username, password)
 	if err != nil {
-		// 认证失败计数，达到阈值按档位封禁（与 Web 登录共用 ban_entries）
-		s.stores.RecordAuthFailure(clientIP, s.banCfg.MaxFailAttempts, s.banCfg.BanDurationMin, "邮件协议认证失败次数过多")
+		// 认证失败计数，达到阈值按档位封禁（与 Web 登录共用 ban_entries）。
+		// 用户名不存在（枚举型爆破）跳过宽限首次触发即封。
+		s.stores.RecordAuthFailure(clientIP, s.banCfg.MaxFailAttempts, s.banCfg.BanDurationMin, "邮件协议认证失败次数过多", s.stores.Users.LoginExists(user.Username))
 		sendResponse(conn, "-ERR authentication failed")
 		return nil, nil, nil
 	}
